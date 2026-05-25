@@ -9,14 +9,9 @@ venv/
 node_modules/
 dist/
 
-# Data
-projects/*
-vault/*
-!projects/.gitkeep
-!vault/.gitkeep
-*.json
-!package.json
-!vite.config.json
+# Data output files (keep package.json, vite config, etc.)
+projects/**/*.json
+vault/**/*.json
 
 # IDE
 .idea/
