@@ -147,6 +147,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import FileUpload from '../components/FileUpload.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
 import OntologyView from '../components/OntologyView.vue'
@@ -255,6 +256,7 @@ async function onGraphCompleted() {
 function onTaskFailed(err) {
   currentTaskId.value = null
   running.value = false
+  ElMessage.error(err || '작업이 실패했습니다. 다시 시도해 주세요.')
 }
 
 function goToUpload() {

@@ -83,6 +83,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { projectsApi } from '../api/client.js'
 
 const router = useRouter()
@@ -117,14 +118,25 @@ async function createProject() {
     createDialogVisible.value = false
     createForm.value = { name: '', description: '' }
     router.push(`/projects/${r.data.project_id}`)
+  } catch (e) {
+    ElMessage.error('프로젝트 생성에 실패했습니다.')
   } finally {
     creating.value = false
   }
 }
 
 async function deleteProject(id) {
-  await projectsApi.delete(id)
-  await loadProjects()
+  try {
+    await ElMessageBox.confirm('프로젝트를 삭제하시겠습니까?', '확인', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await projectsApi.delete(id)
+    await loadProjects()
+  } catch {
+    ElMessage.error('삭제에 실패했습니다.')
+  }
 }
 
 function statusLabel(s) {
