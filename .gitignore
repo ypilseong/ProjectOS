@@ -10,8 +10,10 @@ node_modules/
 dist/
 
 # Data
-projects/
-vault/
+projects/*
+vault/*
+!projects/.gitkeep
+!vault/.gitkeep
 *.json
 !package.json
 !vite.config.json
