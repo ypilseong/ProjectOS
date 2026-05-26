@@ -81,3 +81,39 @@ def test_empty_graph_returns_no_profiles():
 
     profiles = asyncio.run(run_empty())
     assert profiles == []
+
+
+@pytest.fixture
+def two_person_graph():
+    g = nx.DiGraph()
+    g.add_node("Person:Yang Pilseong", type="Person", name="Yang Pilseong",
+               description="ML researcher", source_files=["cv.pdf"])
+    g.add_node("Person:Kim Chulsoo", type="Person", name="Kim Chulsoo",
+               description="Advisor", source_files=["cv.pdf"])
+    g.add_node("Skill:Python", type="Skill", name="Python",
+               description="", source_files=["cv.pdf"])
+    g.add_edge("Person:Yang Pilseong", "Skill:Python", relation="USES_SKILL")
+    return g
+
+
+@pytest.mark.asyncio
+async def test_profile_agent_filters_by_person_ids(two_person_graph):
+    from app.agents.profile_agent import ProfileAgent
+
+    agent = ProfileAgent()
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_PROFILE_RESPONSE)):
+        profiles = await agent.run(two_person_graph, person_ids=["Person:Yang Pilseong"])
+
+    assert len(profiles) == 1
+    assert profiles[0].name == "Yang Pilseong"
+
+
+@pytest.mark.asyncio
+async def test_profile_agent_returns_all_when_person_ids_is_none(two_person_graph):
+    from app.agents.profile_agent import ProfileAgent
+
+    agent = ProfileAgent()
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_PROFILE_RESPONSE)):
+        profiles = await agent.run(two_person_graph, person_ids=None)
+
+    assert len(profiles) == 2

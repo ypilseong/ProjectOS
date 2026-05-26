@@ -1,6 +1,9 @@
+from typing import Callable
+
 import networkx as nx
 
 from app.models.graph import CareerProfile
+from app.utils.entity_validation import is_valid_person_name
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
 
@@ -11,18 +14,34 @@ class ProfileAgent:
     def __init__(self):
         self._llm = LLMClient()
 
-    async def run(self, graph: nx.DiGraph) -> list[CareerProfile]:
-        person_nodes = [
+    async def run(
+        self,
+        graph: nx.DiGraph,
+        person_ids: list[str] | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> list[CareerProfile]:
+        all_person_nodes = [
             (nid, data)
             for nid, data in graph.nodes(data=True)
             if data.get("type") == "Person"
+            and is_valid_person_name(str(data.get("name", "")))
         ]
+        if person_ids is not None:
+            id_set = set(person_ids)
+            person_nodes = [(nid, data) for nid, data in all_person_nodes if nid in id_set]
+        else:
+            person_nodes = all_person_nodes
+
         profiles = []
-        for node_id, node_data in person_nodes:
-            logger.info(f"ProfileAgent: building profile for {node_data['name']}")
+        total = len(person_nodes)
+        for i, (node_id, node_data) in enumerate(person_nodes, start=1):
+            name = node_data["name"]
+            logger.info(f"ProfileAgent: building profile for {name}")
             context = self._collect_context(graph, node_id)
-            profile = await self._generate_profile(node_data["name"], context)
+            profile = await self._generate_profile(name, context)
             profiles.append(profile)
+            if progress_callback:
+                progress_callback(i, total, name)
         return profiles
 
     def _collect_context(self, graph: nx.DiGraph, person_id: str) -> dict:
