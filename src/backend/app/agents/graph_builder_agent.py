@@ -1,11 +1,13 @@
 import json
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Callable
 
 import networkx as nx
 
 from app.config import config
 from app.models.graph import GraphStats, Ontology, TextChunk
+from app.utils.entity_validation import is_valid_entity
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
 
@@ -23,57 +25,82 @@ class GraphBuilderAgent:
         ontology: Ontology,
         incremental: bool = False,
         graph_path: str | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> nx.DiGraph:
         graph = nx.DiGraph()
         if incremental and graph_path and Path(graph_path).exists():
             data = json.loads(Path(graph_path).read_text())
+            # normalize legacy 'links' key back to 'edges' for nx.node_link_graph compatibility
+            if "links" in data and "edges" not in data:
+                data["edges"] = data.pop("links")
             graph = nx.node_link_graph(data)
             logger.info(f"Loaded existing graph: {graph.number_of_nodes()} nodes")
 
         entity_types = [e.name for e in ontology.entity_types]
         edge_types = [e.name for e in ontology.edge_types]
 
-        for i, chunk in enumerate(chunks):
-            logger.info(f"Processing chunk {i + 1}/{len(chunks)}")
+        total = len(chunks)
+        allowed_edge_set = set(edge_types)
+        for i, chunk in enumerate(chunks, start=1):
+            logger.info(f"Processing chunk {i}/{total}")
             try:
                 result = await self._extract_from_chunk(chunk, entity_types, edge_types)
-                self._merge_into_graph(graph, result, chunk)
+                self._merge_into_graph(graph, result, chunk, allowed_edge_set)
             except Exception as e:
                 logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+            if progress_callback:
+                progress_callback(i, total)
 
         return graph
 
     async def _extract_from_chunk(
         self, chunk: TextChunk, entity_types: list[str], edge_types: list[str]
     ) -> dict:
-        prompt = f"""다음 텍스트에서 엔티티와 관계를 추출하세요.
+        prompt = f"""Extract entities and relations from the text below.
 
-엔티티 타입: {', '.join(entity_types)}
-관계 타입: {', '.join(edge_types)}
+Allowed entity types: {', '.join(entity_types)}
+Allowed relation types: {', '.join(edge_types)}
 
-텍스트:
+Extraction rules:
+- Do not create entities for chunks, pages, sections, or raw text snippets.
+- Extract important skills, technologies, tools, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
+- Do not create Keyword or Concept entities. If a term looks like an important keyword, classify it using the most specific allowed type.
+- Examples: "LLM", "NetworkX", "Vue", "D3.js" -> Skill or Technology.
+- Examples: "ProjectOS", "MiroFish" -> Project.
+- Examples: "그래프 시각화 기능 구현", "30% performance improvement" -> Achievement when the outcome is concrete.
+- Avoid vague generic nouns, broad topics, isolated sentence fragments, and duplicate entities.
+- Use Person only for real, identifiable human names explicitly present in the text.
+- Do not create Person entities for pronouns, the author/user, anonymous people, role titles, departments, fields, or generic descriptions such as "I", "me", "저", "나", "author", "user", "student", "panelists", or "researcher".
+- Role is ONLY for formal job titles or academic positions that could appear on a resume or business card. Examples: "Research Engineer", "PhD Student", "Professor", "Team Lead", "Software Engineer", "Undergraduate Researcher". Do NOT classify as Role: activity descriptions ("데이터 검수", "reviewing model evaluation frameworks"), participant labels ("발표자", "사회자", "패널", "moderator"), generic descriptions ("지역 주민", "기업", "약 1년간 근무"), or any phrase that is not a named position. If an item describes a concrete outcome or result → Achievement. If it describes participation in an event → Event. Vague or generic descriptions → do not extract at all.
+- Entity type values and relation values must come from the allowed lists.
+- Entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
+
+Text:
 {chunk.text}
 
-JSON 형식으로 응답:
+Return only valid JSON in this exact shape:
 {{
   "entities": [
-    {{"type": "Person", "name": "이름", "description": "설명"}}
+    {{"type": "Person", "name": "양필성", "description": "ML researcher"}}
   ],
   "relations": [
-    {{"source": "이름", "source_type": "Person",
-      "target": "대상", "target_type": "Skill",
+    {{"source": "양필성", "source_type": "Person",
+      "target": "Python", "target_type": "Skill",
       "relation": "USES_SKILL", "confidence": 0.9}}
   ]
 }}"""
         return await self._llm.chat_json([{"role": "user", "content": prompt}])
 
-    def _merge_into_graph(self, graph: nx.DiGraph, result: dict, chunk: TextChunk):
+    def _merge_into_graph(
+        self, graph: nx.DiGraph, result: dict, chunk: TextChunk, allowed_edge_set: set[str] | None = None
+    ):
         node_map: dict[str, str] = {}
 
         for entity in result.get("entities", []):
             etype = entity.get("type", "").strip()
             name = entity.get("name", "").strip()
-            if not etype or not name:
+            if not is_valid_entity(etype, name):
+                logger.info(f"Skipping invalid entity: {etype}:{name}")
                 continue
 
             existing = self._find_existing_node(graph, etype, name)
@@ -99,6 +126,9 @@ JSON 형식으로 응답:
             tgt_name = rel.get("target", "")
             relation = rel.get("relation", "")
             if not src_name or not tgt_name or not relation:
+                continue
+            if allowed_edge_set and relation not in allowed_edge_set:
+                logger.info(f"Skipping invalid relation: {relation}")
                 continue
             src_id = node_map.get(src_name)
             tgt_id = node_map.get(tgt_name)
@@ -127,6 +157,9 @@ JSON 형식으로 응답:
     def save(self, graph: nx.DiGraph, path: str):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         data = nx.node_link_data(graph)
+        # NetworkX 3.x uses 'edges' key; normalize to 'links' for frontend compatibility
+        if "edges" in data and "links" not in data:
+            data["links"] = data.pop("edges")
         Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     def get_stats(self, graph: nx.DiGraph) -> GraphStats:
