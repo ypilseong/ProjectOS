@@ -375,4 +375,8 @@ async def _run_profiles(task_id: str, project_id: str):
             message=f"프로필 생성 완료: {len(profiles)}개",
         )
     except Exception as e:
+        project = project_store.get(project_id)
+        if project:
+            project.status = ProjectStatus.FAILED
+            project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
