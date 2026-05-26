@@ -2,6 +2,7 @@ import json
 import re
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import networkx as nx
 
@@ -25,26 +26,36 @@ TYPE_TO_FOLDER = {
 }
 
 
+def _safe_filename(name: str) -> str:
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip()
+    safe = re.sub(r"\s+", " ", safe)
+    safe = safe.rstrip(".")
+    return safe or "Untitled"
+
+
 class ObsidianWriterAgent:
     def run(
         self,
         graph: nx.DiGraph,
-        profiles: list[CareerProfile],
+        profiles: list[CareerProfile] | None = None,
         vault_path: str | None = None,
         delta: bool = False,
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ):
         vault = Path(vault_path or config.VAULT_DIR)
         self._setup_vault(vault)
-        profile_map = {p.name: p for p in profiles}
+        profile_map = {p.name: p for p in (profiles or [])}
 
-        for node_id, data in graph.nodes(data=True):
+        nodes = list(graph.nodes(data=True))
+        total = len(nodes)
+        for i, (node_id, data) in enumerate(nodes, start=1):
             ntype = data.get("type", "Unknown")
             folder = TYPE_TO_FOLDER.get(ntype, "Misc")
             folder_path = vault / folder
             folder_path.mkdir(parents=True, exist_ok=True)
 
             name = data.get("name", node_id)
-            note_path = folder_path / f"{name}.md"
+            note_path = folder_path / f"{_safe_filename(name)}.md"
 
             successors = [
                 (graph.nodes[s].get("name", s), graph.edges[node_id, s].get("relation", ""))
@@ -68,6 +79,8 @@ class ObsidianWriterAgent:
 
             note_path.write_text(final_content, encoding="utf-8")
             logger.info(f"Written: {note_path}")
+            if progress_callback:
+                progress_callback(i, total, name)
 
         self._write_canvas(vault, graph)
 
