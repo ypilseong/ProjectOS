@@ -13,7 +13,10 @@ async def get_user():
     path = Path(config.USER_CONFIG_PATH)
     if not path.exists():
         raise HTTPException(status_code=404, detail="User config not set")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="User config is corrupted")
 
 
 @router.post("")

@@ -1,4 +1,3 @@
-import json
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -33,3 +32,13 @@ def test_get_user_returns_saved_config(client):
 def test_post_user_display_name_defaults_to_name(client):
     r = client.post("/api/user", json={"name": "양필성"})
     assert r.json()["display_name"] == "양필성"
+
+
+def test_get_user_returns_500_on_corrupted_config(client, tmp_path, monkeypatch):
+    corrupted = tmp_path / "user.json"
+    corrupted.write_text("{ this is not valid json }", encoding="utf-8")
+    from app.config import config
+    monkeypatch.setattr(config, "USER_CONFIG_PATH", str(corrupted))
+    r = client.get("/api/user")
+    assert r.status_code == 500
+    assert "corrupted" in r.json()["detail"]
