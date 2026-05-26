@@ -148,14 +148,6 @@ async def get_graph_stats(project_id: str):
     return dataclasses.asdict(stats)
 
 
-@router.get("/{project_id}/profiles")
-async def get_profiles(project_id: str):
-    p = Path(config.PROJECTS_DIR) / project_id / "profiles.json"
-    if not p.exists():
-        raise HTTPException(404, "Profiles not built yet")
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
 async def _run_ontology(task_id: str, project_id: str):
     try:
         from app.agents.ontology_agent import OntologyAgent
