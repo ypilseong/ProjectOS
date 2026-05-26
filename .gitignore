@@ -10,9 +10,14 @@ venv/
 node_modules/
 dist/
 
-# Data output files (keep package.json, vite config, etc.)
+# Runtime data — uploaded files, generated graph/vault output
+src/backend/projects/*/files/
 src/backend/projects/**/*.json
+src/backend/vault/**/*.md
+src/backend/vault/**/*.canvas
 src/backend/vault/**/*.json
+**/.stfolder
+**/.stignore
 
 # IDE
 .idea/
