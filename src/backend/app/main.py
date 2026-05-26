@@ -13,6 +13,7 @@ app.add_middleware(
 
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(graph.router, prefix="/api/projects", tags=["graph"])
+app.include_router(graph.global_router, prefix="/api/graph", tags=["graph"])
 app.include_router(chat.router, prefix="/api/projects", tags=["chat"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 

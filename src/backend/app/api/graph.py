@@ -14,6 +14,65 @@ from app.services.task_manager import task_manager
 
 router = APIRouter()
 
+global_router = APIRouter()
+
+PROJECT_COLORS = [
+    "#4A90D9", "#5BA85B", "#E8A838", "#9B59B6", "#E74C3C",
+    "#1ABC9C", "#E67E22", "#27AE60", "#2980B9", "#8E44AD",
+]
+
+
+@global_router.get("/global")
+async def get_global_graph():
+    base = Path(config.PROJECTS_DIR)
+    if not base.exists():
+        return {"nodes": [], "links": [], "projects": []}
+
+    all_nodes: list[dict] = []
+    all_links: list[dict] = []
+    projects_meta: list[dict] = []
+    color_idx = 0
+
+    for proj_dir in sorted(d for d in base.iterdir() if d.is_dir()):
+        graph_path = proj_dir / "graph.json"
+        meta_path = proj_dir / "meta.json"
+        if not graph_path.exists() or not meta_path.exists():
+            continue
+
+        project_id = proj_dir.name
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        project_name = meta.get("name", project_id)
+        color = PROJECT_COLORS[color_idx % len(PROJECT_COLORS)]
+        color_idx += 1
+
+        projects_meta.append({"id": project_id, "name": project_name, "color": color})
+
+        data = json.loads(graph_path.read_text(encoding="utf-8"))
+        nodes = data.get("nodes", [])
+        links = data.get("links", [])
+
+        id_map: dict[str, str] = {}
+        for node in nodes:
+            orig_id = node["id"]
+            new_id = f"{project_id}::{orig_id}"
+            id_map[orig_id] = new_id
+            all_nodes.append({**node, "id": new_id, "project_id": project_id, "project_name": project_name})
+
+        for lnk in links:
+            src = lnk.get("source")
+            tgt = lnk.get("target")
+            if isinstance(src, dict):
+                src = src["id"]
+            if isinstance(tgt, dict):
+                tgt = tgt["id"]
+            all_links.append({
+                **lnk,
+                "source": id_map.get(src, f"{project_id}::{src}"),
+                "target": id_map.get(tgt, f"{project_id}::{tgt}"),
+            })
+
+    return {"nodes": all_nodes, "links": all_links, "projects": projects_meta}
+
 
 @router.post("/{project_id}/ontology")
 async def run_ontology(project_id: str):
