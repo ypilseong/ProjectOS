@@ -21,7 +21,7 @@ npm run preview
 src/
   api/client.js      — axios 기반 API 클라이언트 (projectsApi, tasksApi, chatStreamUrl)
   components/        — 8개 재사용 컴포넌트
-  views/             — 3개 페이지 뷰 (HomeView, ProjectDetail, AboutView)
+  views/             — 페이지 뷰 (HomeView, ProjectDetail, AboutView)
   router/index.js    — Vue Router 설정
   App.vue            — 루트 컴포넌트 (router-view)
   main.js            — 앱 진입점
