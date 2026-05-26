@@ -11,8 +11,8 @@ node_modules/
 dist/
 
 # Data output files (keep package.json, vite config, etc.)
-projects/**/*.json
-vault/**/*.json
+src/backend/projects/**/*.json
+src/backend/vault/**/*.json
 
 # IDE
 .idea/
