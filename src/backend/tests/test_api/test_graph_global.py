@@ -74,6 +74,13 @@ def test_global_graph_includes_project_metadata(client, two_project_dirs):
     names = {p["name"] for p in data["projects"]}
     assert "프로젝트A" in names
 
+    # verify color field present
+    assert all("color" in p for p in data["projects"])
+
+    # verify project_id and project_name on nodes
+    assert all("project_id" in n for n in data["nodes"])
+    assert all("project_name" in n for n in data["nodes"])
+
 
 def test_global_graph_skips_projects_without_graph(client, tmp_path):
     d = tmp_path / "nograph"

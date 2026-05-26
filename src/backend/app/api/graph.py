@@ -11,6 +11,9 @@ from app.config import config
 from app.models.project import TaskStatus
 from app.services.project_store import project_store
 from app.services.task_manager import task_manager
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -40,36 +43,40 @@ async def get_global_graph():
             continue
 
         project_id = proj_dir.name
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        project_name = meta.get("name", project_id)
-        color = PROJECT_COLORS[color_idx % len(PROJECT_COLORS)]
-        color_idx += 1
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            project_name = meta.get("name", project_id)
+            color = PROJECT_COLORS[color_idx % len(PROJECT_COLORS)]
+            color_idx += 1
 
-        projects_meta.append({"id": project_id, "name": project_name, "color": color})
+            projects_meta.append({"id": project_id, "name": project_name, "color": color})
 
-        data = json.loads(graph_path.read_text(encoding="utf-8"))
-        nodes = data.get("nodes", [])
-        links = data.get("links", [])
+            data = json.loads(graph_path.read_text(encoding="utf-8"))
+            nodes = data.get("nodes", [])
+            links = data.get("links", [])
 
-        id_map: dict[str, str] = {}
-        for node in nodes:
-            orig_id = node["id"]
-            new_id = f"{project_id}::{orig_id}"
-            id_map[orig_id] = new_id
-            all_nodes.append({**node, "id": new_id, "project_id": project_id, "project_name": project_name})
+            id_map: dict[str, str] = {}
+            for node in nodes:
+                orig_id = node["id"]
+                new_id = f"{project_id}::{orig_id}"
+                id_map[orig_id] = new_id
+                all_nodes.append({**node, "id": new_id, "project_id": project_id, "project_name": project_name})
 
-        for lnk in links:
-            src = lnk.get("source")
-            tgt = lnk.get("target")
-            if isinstance(src, dict):
-                src = src["id"]
-            if isinstance(tgt, dict):
-                tgt = tgt["id"]
-            all_links.append({
-                **lnk,
-                "source": id_map.get(src, f"{project_id}::{src}"),
-                "target": id_map.get(tgt, f"{project_id}::{tgt}"),
-            })
+            for lnk in links:
+                src = lnk.get("source")
+                tgt = lnk.get("target")
+                if isinstance(src, dict):
+                    src = src["id"]
+                if isinstance(tgt, dict):
+                    tgt = tgt["id"]
+                all_links.append({
+                    **lnk,
+                    "source": id_map.get(src, f"{project_id}::{src}"),
+                    "target": id_map.get(tgt, f"{project_id}::{tgt}"),
+                })
+        except Exception as e:
+            logger.warning(f"Skipping project {project_id}: {e}")
+            continue
 
     return {"nodes": all_nodes, "links": all_links, "projects": projects_meta}
 
