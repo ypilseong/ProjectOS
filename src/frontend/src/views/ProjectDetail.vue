@@ -17,19 +17,90 @@
           <StatsPanel :stats="stats" />
         </div>
 
-        <el-divider v-if="profiles.length" />
-        <div v-if="profiles.length" class="sidebar-section">
+        <el-divider />
+        <div class="sidebar-section">
           <div class="sidebar-label">커리어 프로필</div>
-          <el-select v-model="selectedProfile" placeholder="프로필 선택" size="small" style="width: 100%; margin-bottom: 8px">
-            <el-option v-for="p in profiles" :key="p.name" :label="p.name" :value="p.name" />
-          </el-select>
-          <ProfileCard v-if="currentProfile" :profile="currentProfile" />
+          <div v-if="profileTask">
+            <ProgressPanel
+              :task-id="profileTask"
+              @completed="onProfileCompleted"
+              @failed="onProfileFailed"
+            />
+          </div>
+          <div v-else-if="profileData && profileData.length">
+            <el-button size="small" type="success" plain style="width:100%;margin-bottom:6px"
+                       @click="ElMessage.info('프로필 뷰어 준비 중')">
+              프로필 보기 ({{ profileData.length }}개)
+            </el-button>
+            <el-button size="small" plain style="width:100%" :loading="profileRunning" @click="runProfiles">
+              재생성
+            </el-button>
+          </div>
+          <div v-else>
+            <el-button
+              size="small"
+              type="primary"
+              style="width:100%"
+              :loading="profileRunning"
+              :disabled="project?.status !== 'ready'"
+              @click="runProfiles"
+            >
+              프로필 생성
+            </el-button>
+            <p style="font-size:11px;color:#909399;margin-top:6px">
+              그래프 빌드 완료 후 실행 가능
+            </p>
+          </div>
         </div>
 
         <el-divider />
         <div class="sidebar-section">
           <div class="sidebar-label">Vault 파일</div>
           <VaultTree :project-id="projectId" :vault-tree="vaultTree" @add-files="goToUpload" />
+        </div>
+
+        <el-divider />
+        <div class="sidebar-section">
+          <div class="sidebar-label">문서 분석</div>
+          <div v-if="analysisTask">
+            <ProgressPanel
+              :task-id="analysisTask"
+              @completed="onAnalysisCompleted"
+              @failed="onAnalysisFailed"
+            />
+          </div>
+          <div v-else-if="analysisData">
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              style="width:100%;margin-bottom:6px"
+              @click="analysisDrawerVisible = true"
+            >
+              분석 결과 보기
+            </el-button>
+            <el-button
+              size="small"
+              plain
+              style="width:100%"
+              :loading="analysisRunning"
+              @click="runAnalysis"
+            >
+              재분석
+            </el-button>
+          </div>
+          <div v-else>
+            <el-button
+              size="small"
+              type="primary"
+              style="width:100%"
+              :loading="analysisRunning"
+              @click="runAnalysis"
+            >
+              분석 실행
+            </el-button>
+            <p class="analysis-hint">파일 업로드 후 실행 가능</p>
+          </div>
         </div>
       </el-aside>
 
@@ -95,6 +166,14 @@
             <el-button type="primary" :loading="running" @click="runGraph">
               그래프 구축 시작
             </el-button>
+            <el-button
+              v-if="hasExistingGraph"
+              type="success"
+              :loading="running"
+              @click="runGraphIncremental"
+            >
+              증분 업데이트 시작
+            </el-button>
             <el-button @click="activeStep = 1" plain class="ml-2">← 이전</el-button>
           </div>
           <div v-if="currentTaskId" class="mt-3">
@@ -141,6 +220,10 @@
         </div>
       </el-main>
     </el-container>
+    <AnalysisDrawer
+      v-model:visible="analysisDrawerVisible"
+      :analysis-data="analysisData"
+    />
   </div>
 </template>
 
@@ -152,10 +235,10 @@ import FileUpload from '../components/FileUpload.vue'
 import ProgressPanel from '../components/ProgressPanel.vue'
 import OntologyView from '../components/OntologyView.vue'
 import StatsPanel from '../components/StatsPanel.vue'
-import ProfileCard from '../components/ProfileCard.vue'
 import GraphView from '../components/GraphView.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import VaultTree from '../components/VaultTree.vue'
+import AnalysisDrawer from '../components/AnalysisDrawer.vue'
 import { projectsApi } from '../api/client.js'
 
 const route = useRoute()
@@ -169,37 +252,51 @@ const running = ref(false)
 const ontology = ref(null)
 const graphData = ref(null)
 const stats = ref({ total_nodes: 0, total_edges: 0, nodes_by_type: {}, edges_by_type: {} })
-const profiles = ref([])
-const selectedProfile = ref(null)
+const profileData = ref(null)
+const profileTask = ref(null)
+const profileRunning = ref(false)
 const vaultTree = ref([])
 const resultTab = ref('graph')
+const analysisData = ref(null)
+const analysisTask = ref(null)
+const analysisRunning = ref(false)
+const analysisDrawerVisible = ref(false)
 
-const currentProfile = computed(() =>
-  profiles.value.find(p => p.name === selectedProfile.value)
-)
+const hasExistingGraph = computed(() => stats.value.total_nodes > 0)
 
 onMounted(async () => {
   try {
     const r = await projectsApi.get(projectId.value)
     project.value = r.data
     await loadSidebarData()
+    await loadAnalysis()
+    try {
+      const pr = await projectsApi.getProfiles(projectId.value)
+      profileData.value = pr.data
+    } catch {
+      // not yet generated — expected
+    }
   } catch (e) {
     console.error('Failed to load project:', e)
   }
 })
 
 async function loadSidebarData() {
-  const [statsR, profilesR, vaultR] = await Promise.allSettled([
+  const [statsR, vaultR] = await Promise.allSettled([
     projectsApi.getGraphStats(projectId.value),
-    projectsApi.getProfiles(projectId.value),
     projectsApi.getVaultTree(projectId.value),
   ])
   if (statsR.status === 'fulfilled') stats.value = statsR.value.data
-  if (profilesR.status === 'fulfilled') {
-    profiles.value = profilesR.value.data
-    if (profiles.value.length) selectedProfile.value = profiles.value[0].name
-  }
   if (vaultR.status === 'fulfilled') vaultTree.value = vaultR.value.data
+}
+
+async function loadAnalysis() {
+  try {
+    const r = await projectsApi.getAnalysis(projectId.value)
+    analysisData.value = r.data
+  } catch {
+    analysisData.value = null
+  }
 }
 
 function onFilesUploaded(taskId) {
@@ -241,6 +338,16 @@ async function runGraph() {
   }
 }
 
+async function runGraphIncremental() {
+  running.value = true
+  try {
+    const r = await projectsApi.runGraphIncremental(projectId.value)
+    currentTaskId.value = r.data.task_id
+  } finally {
+    running.value = false
+  }
+}
+
 async function onGraphCompleted() {
   currentTaskId.value = null
   try {
@@ -262,6 +369,62 @@ function onTaskFailed(err) {
 function goToUpload() {
   activeStep.value = 0
 }
+
+async function runAnalysis() {
+  analysisRunning.value = true
+  try {
+    const r = await projectsApi.runAnalysis(projectId.value)
+    analysisTask.value = r.data.task_id
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '분석을 시작할 수 없습니다.')
+  } finally {
+    analysisRunning.value = false
+  }
+}
+
+async function onAnalysisCompleted() {
+  analysisTask.value = null
+  try {
+    const r = await projectsApi.getAnalysis(projectId.value)
+    analysisData.value = r.data
+    analysisDrawerVisible.value = true
+  } catch {
+    ElMessage.error('분석 결과를 불러오지 못했습니다.')
+  }
+}
+
+function onAnalysisFailed(err) {
+  analysisTask.value = null
+  ElMessage.error(err || '분석에 실패했습니다.')
+}
+
+async function runProfiles() {
+  profileRunning.value = true
+  try {
+    const r = await projectsApi.runProfiles(projectId.value)
+    profileTask.value = r.data.task_id
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '프로필 생성을 시작할 수 없습니다.')
+  } finally {
+    profileRunning.value = false
+  }
+}
+
+async function onProfileCompleted() {
+  profileTask.value = null
+  try {
+    const r = await projectsApi.getProfiles(projectId.value)
+    profileData.value = r.data
+    ElMessage.success('프로필 생성이 완료됐습니다.')
+  } catch {
+    ElMessage.error('프로필 결과를 불러오지 못했습니다.')
+  }
+}
+
+function onProfileFailed(err) {
+  profileTask.value = null
+  ElMessage.error(err || '프로필 생성에 실패했습니다.')
+}
 </script>
 
 <style scoped>
@@ -279,6 +442,7 @@ function goToUpload() {
 .project-title { font-size: 16px; font-weight: bold; color: #303133; padding: 4px 0; }
 .sidebar-label { font-size: 11px; color: #909399; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
 .sidebar-section { margin-bottom: 8px; }
+.analysis-hint { font-size: 11px; color: #909399; margin: 6px 0 0; }
 .main-panel { padding: 24px; overflow-y: auto; background: #f5f7fa; }
 .steps { margin-bottom: 32px; }
 .step-content { max-width: 900px; margin: 0 auto; background: white; padding: 24px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }

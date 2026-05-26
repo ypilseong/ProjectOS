@@ -2,6 +2,11 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
+export const userApi = {
+  get: () => api.get('/user'),
+  set: (data) => api.post('/user', data),
+}
+
 export const projectsApi = {
   list: () => api.get('/projects'),
   create: (data) => api.post('/projects', data),
@@ -16,6 +21,7 @@ export const projectsApi = {
   runGraph: (id) => api.post(`/projects/${id}/graph`),
   runGraphIncremental: (id) => api.post(`/projects/${id}/graph/incremental`),
   getProfiles: (id) => api.get(`/projects/${id}/profiles`),
+  runProfiles: (id) => api.post(`/projects/${id}/profiles`),
   getVaultTree: (id) => api.get(`/projects/${id}/vault`),
   downloadVault: (id) => `/api/projects/${id}/vault/download`,
   runAnalysis: (id) => api.post(`/projects/${id}/analysis`),
@@ -32,10 +38,5 @@ export const tasksApi = {
 }
 
 export const chatStreamUrl = (projectId) => `/api/projects/${projectId}/chat`
-
-export const userApi = {
-  get: () => api.get('/user'),
-  set: (data) => api.post('/user', data),
-}
 
 export default api
