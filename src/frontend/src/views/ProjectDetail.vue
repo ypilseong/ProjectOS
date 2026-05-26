@@ -276,6 +276,29 @@ onMounted(async () => {
     } catch {
       // not yet generated — expected
     }
+
+    const status = r.data.status
+    if (status === 'ready') {
+      try {
+        const [gr, or] = await Promise.allSettled([
+          projectsApi.getGraph(projectId.value),
+          projectsApi.getOntology(projectId.value),
+        ])
+        if (gr.status === 'fulfilled') graphData.value = gr.value.data
+        if (or.status === 'fulfilled') ontology.value = or.value.data
+        activeStep.value = 3
+      } catch {}
+    } else if (status === 'building') {
+      activeStep.value = 2
+      try {
+        const or = await projectsApi.getOntology(projectId.value)
+        ontology.value = or.data
+      } catch {}
+    } else if (status === 'ontology') {
+      activeStep.value = 1
+    } else if (status === 'parsed') {
+      activeStep.value = 1
+    }
   } catch (e) {
     console.error('Failed to load project:', e)
   }
