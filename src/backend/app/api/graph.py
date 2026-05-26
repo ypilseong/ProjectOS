@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.config import config
-from app.models.project import TaskStatus
+from app.models.project import ProjectStatus, TaskStatus
 from app.services.project_store import project_store
 from app.services.task_manager import task_manager
 from app.utils.logger import get_logger
@@ -53,7 +53,7 @@ async def get_global_graph():
 
             data = json.loads(graph_path.read_text(encoding="utf-8"))
             nodes = data.get("nodes", [])
-            links = data.get("links", [])
+            links = data.get("links") or data.get("edges", [])
 
             id_map: dict[str, str] = {}
             for node in nodes:
@@ -86,6 +86,8 @@ async def run_ontology(project_id: str):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    project.status = ProjectStatus.ONTOLOGY
+    project_store.save(project)
     task = task_manager.create(project_id, "ontology")
     asyncio.create_task(_run_ontology(task.task_id, project_id))
     return {"task_id": task.task_id}
@@ -104,6 +106,8 @@ async def run_graph(project_id: str):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    project.status = ProjectStatus.BUILDING
+    project_store.save(project)
     task = task_manager.create(project_id, "graph")
     asyncio.create_task(_run_graph(task.task_id, project_id, incremental=False))
     return {"task_id": task.task_id}
@@ -114,6 +118,8 @@ async def run_graph_incremental(project_id: str):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    project.status = ProjectStatus.BUILDING
+    project_store.save(project)
     task = task_manager.create(project_id, "graph_incremental")
     asyncio.create_task(_run_graph(task.task_id, project_id, incremental=True))
     return {"task_id": task.task_id}
@@ -134,6 +140,8 @@ async def get_graph_stats(project_id: str):
         raise HTTPException(404, "Graph not built yet")
     from app.agents.graph_builder_agent import GraphBuilderAgent
     data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
     graph = nx.node_link_graph(data)
     agent = GraphBuilderAgent()
     stats = agent.get_stats(graph)
@@ -149,17 +157,18 @@ async def get_profiles(project_id: str):
 
 
 async def _run_ontology(task_id: str, project_id: str):
-    from app.agents.ontology_agent import OntologyAgent
-    from app.models.graph import TextChunk
     try:
-        task_manager.update(task_id, status=TaskStatus.RUNNING, message="온톨로지 분석 시작")
+        from app.agents.ontology_agent import OntologyAgent
+        from app.models.graph import TextChunk
+
+        task_manager.update(task_id, status=TaskStatus.RUNNING, message="온톨로지 분석 시작 (0/1)")
         chunks_path = Path(config.PROJECTS_DIR) / project_id / "chunks.json"
         if not chunks_path.exists():
             raise ValueError("chunks.json not found — upload files first")
         chunks_data = json.loads(chunks_path.read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
         agent = OntologyAgent()
-        task_manager.update(task_id, progress=30, message="LLM 온톨로지 생성 중...")
+        task_manager.update(task_id, progress=30, message="LLM 온톨로지 생성 중... (1/1)")
         ontology = await agent.run(chunks)
         out = Path(config.PROJECTS_DIR) / project_id / "ontology.json"
         out.write_text(
@@ -173,15 +182,19 @@ async def _run_ontology(task_id: str, project_id: str):
             message=f"{len(ontology.entity_types)}개 엔티티 타입 생성 완료",
         )
     except Exception as e:
+        project = project_store.get(project_id)
+        if project:
+            project.status = ProjectStatus.FAILED
+            project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
 
 
 async def _run_graph(task_id: str, project_id: str, incremental: bool):
-    from app.agents.graph_builder_agent import GraphBuilderAgent
-    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
-    from app.agents.profile_agent import ProfileAgent
-    from app.models.graph import EdgeTypeDef, EntityTypeDef, Ontology, TextChunk
     try:
+        from app.agents.graph_builder_agent import GraphBuilderAgent
+        from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+        from app.models.graph import EdgeTypeDef, EntityTypeDef, Ontology, TextChunk
+
         task_manager.update(task_id, status=TaskStatus.RUNNING, message="그래프 구축 시작", progress=10)
         proj_dir = Path(config.PROJECTS_DIR) / project_id
         chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
@@ -194,22 +207,59 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         )
         graph_path = str(proj_dir / "graph.json")
         graph_agent = GraphBuilderAgent()
-        task_manager.update(task_id, message="엔티티/관계 추출 중...", progress=30)
+        total_chunks = len(chunks)
+        task_manager.update(
+            task_id,
+            message=f"엔티티/관계 추출 중... (0/{total_chunks})",
+            progress=30,
+        )
+
+        def on_chunk_progress(current: int, total: int):
+            ratio = current / total if total else 1
+            task_manager.update(
+                task_id,
+                message=f"엔티티/관계 추출 중... ({current}/{total})",
+                progress=30 + int(ratio * 40),
+            )
+
         graph = await graph_agent.run(
-            chunks, ontology, incremental=incremental, graph_path=graph_path
+            chunks,
+            ontology,
+            incremental=incremental,
+            graph_path=graph_path,
+            progress_callback=on_chunk_progress,
         )
         graph_agent.save(graph, graph_path)
-        task_manager.update(task_id, message="프로필 생성 중...", progress=70)
-        profile_agent = ProfileAgent()
-        profiles = await profile_agent.run(graph)
-        profiles_data = [dataclasses.asdict(p) for p in profiles]
-        (proj_dir / "profiles.json").write_text(
-            json.dumps(profiles_data, indent=2, ensure_ascii=False), encoding="utf-8"
+
+        total_nodes = graph.number_of_nodes()
+        task_manager.update(
+            task_id,
+            message=f"Obsidian vault 작성 중... (0/{total_nodes})",
+            progress=72,
         )
-        task_manager.update(task_id, message="Obsidian vault 작성 중...", progress=85)
         writer = ObsidianWriterAgent()
-        writer.run(graph, profiles, vault_path=config.VAULT_DIR, delta=incremental)
+        vault_path = str(Path(config.VAULT_DIR) / project_id)
+
+        def on_vault_progress(current: int, total: int, name: str):
+            ratio = current / total if total else 1
+            task_manager.update(
+                task_id,
+                message=f"Obsidian vault 작성 중... ({current}/{total}) {name}",
+                progress=72 + int(ratio * 25),
+            )
+
+        writer.run(
+            graph,
+            vault_path=vault_path,
+            delta=incremental,
+            progress_callback=on_vault_progress,
+        )
         stats = graph_agent.get_stats(graph)
+        project = project_store.get(project_id)
+        if project:
+            project.status = ProjectStatus.READY
+            project.stats = dataclasses.asdict(stats)
+            project_store.save(project)
         task_manager.update(
             task_id,
             status=TaskStatus.COMPLETED,
@@ -217,4 +267,8 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             message=f"완료: 노드 {stats.total_nodes}개, 엣지 {stats.total_edges}개",
         )
     except Exception as e:
+        project = project_store.get(project_id)
+        if project:
+            project.status = ProjectStatus.FAILED
+            project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
