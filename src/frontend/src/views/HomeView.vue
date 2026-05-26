@@ -6,9 +6,12 @@
           <h1 class="app-title">ProjectOS</h1>
           <span class="app-subtitle">로컬 파일 → 커리어 지식 그래프</span>
         </div>
-        <el-button type="primary" @click="createDialogVisible = true">
-          <el-icon><Plus /></el-icon> 새 프로젝트
-        </el-button>
+        <div class="header-right">
+          <el-button text style="color: white" @click="router.push('/about')">워크플로우</el-button>
+          <el-button type="primary" @click="createDialogVisible = true">
+            <el-icon><Plus /></el-icon> 새 프로젝트
+          </el-button>
+        </div>
       </el-header>
 
       <el-main class="main">
@@ -159,6 +162,7 @@ function statusType(s) {
   color: white;
 }
 .header-left { display: flex; align-items: center; gap: 16px; }
+.header-right { display: flex; align-items: center; gap: 8px; }
 .app-title { font-size: 22px; font-weight: bold; color: white; }
 .app-subtitle { font-size: 13px; opacity: 0.85; }
 .main { padding: 32px; }
