@@ -12,6 +12,8 @@ class Config(BaseSettings):
     MAX_ONTOLOGY_SAMPLE_CHARS: int = 50000
     PROJECTS_DIR: str = "./projects"
     VAULT_DIR: str = "./vault"
+    LOG_DIR: str = "../../logs"
+    USER_CONFIG_PATH: str = "./user.json"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
