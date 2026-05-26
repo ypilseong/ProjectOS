@@ -18,6 +18,12 @@ export const projectsApi = {
   getProfiles: (id) => api.get(`/projects/${id}/profiles`),
   getVaultTree: (id) => api.get(`/projects/${id}/vault`),
   downloadVault: (id) => `/api/projects/${id}/vault/download`,
+  runAnalysis: (id) => api.post(`/projects/${id}/analysis`),
+  getAnalysis: (id) => api.get(`/projects/${id}/analysis`),
+}
+
+export const globalApi = {
+  getGraph: () => api.get('/graph/global'),
 }
 
 export const tasksApi = {
@@ -26,5 +32,10 @@ export const tasksApi = {
 }
 
 export const chatStreamUrl = (projectId) => `/api/projects/${projectId}/chat`
+
+export const userApi = {
+  get: () => api.get('/user'),
+  set: (data) => api.post('/user', data),
+}
 
 export default api

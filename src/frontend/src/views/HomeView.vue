@@ -15,48 +15,74 @@
       </el-header>
 
       <el-main class="main">
-        <div v-if="loading" class="loading">
-          <el-skeleton :rows="3" animated />
-        </div>
-
-        <el-empty
-          v-else-if="!projects.length"
-          description="첫 프로젝트를 만들어 커리어 그래프를 시작하세요"
-          :image-size="160"
-        >
-          <el-button type="primary" @click="createDialogVisible = true">
-            프로젝트 생성
-          </el-button>
-        </el-empty>
-
-        <div v-else class="project-grid">
-          <el-card
-            v-for="p in projects"
-            :key="p.project_id"
-            class="project-card"
-            shadow="hover"
-            @click="router.push(`/projects/${p.project_id}`)"
-          >
-            <div class="card-header">
-              <span class="project-name">{{ p.name }}</span>
-              <el-tag :type="statusType(p.status)" size="small">{{ statusLabel(p.status) }}</el-tag>
+        <el-tabs v-model="activeTab" class="home-tabs">
+          <el-tab-pane label="프로젝트 목록" name="projects">
+            <div v-if="loading" class="loading">
+              <el-skeleton :rows="3" animated />
             </div>
-            <p class="project-desc">{{ p.description || '(설명 없음)' }}</p>
-            <div class="card-footer">
-              <div v-if="p.stats" class="stats-mini">
-                <span>노드 {{ p.stats.total_nodes }}</span>
-                <span>엣지 {{ p.stats.total_edges }}</span>
-              </div>
-              <div class="card-actions">
-                <el-button size="small" type="danger" text @click.stop="deleteProject(p.project_id)">
-                  삭제
-                </el-button>
-              </div>
+
+            <el-empty
+              v-else-if="!projects.length"
+              description="첫 프로젝트를 만들어 커리어 그래프를 시작하세요"
+              :image-size="160"
+            >
+              <el-button type="primary" @click="createDialogVisible = true">
+                프로젝트 생성
+              </el-button>
+            </el-empty>
+
+            <div v-else class="project-grid">
+              <el-card
+                v-for="p in projects"
+                :key="p.project_id"
+                class="project-card"
+                shadow="hover"
+                @click="router.push(`/projects/${p.project_id}`)"
+              >
+                <div class="card-header">
+                  <span class="project-name">{{ p.name }}</span>
+                  <el-tag :type="statusType(p.status)" size="small">{{ statusLabel(p.status) }}</el-tag>
+                </div>
+                <p class="project-desc">{{ p.description || '(설명 없음)' }}</p>
+                <div class="card-footer">
+                  <div v-if="p.stats" class="stats-mini">
+                    <span>노드 {{ p.stats.total_nodes }}</span>
+                    <span>엣지 {{ p.stats.total_edges }}</span>
+                  </div>
+                  <div class="card-actions">
+                    <el-button size="small" type="danger" text @click.stop="deleteProject(p.project_id)">
+                      삭제
+                    </el-button>
+                  </div>
+                </div>
+              </el-card>
             </div>
-          </el-card>
-        </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="전체 그래프" name="global-graph">
+            <div v-if="globalGraphLoading" class="loading">
+              <el-skeleton :rows="5" animated />
+            </div>
+            <el-empty
+              v-else-if="!globalGraphData || !globalGraphData.nodes.length"
+              description="그래프가 구축된 프로젝트가 없습니다. 프로젝트를 만들고 그래프를 구축하세요."
+              :image-size="120"
+            />
+            <div v-else class="global-graph-wrapper">
+              <GraphView
+                :graph-data="globalGraphData"
+                :project-colors="globalProjectColors"
+                :project-names="globalProjectNames"
+                :on-project-node-click="goToProject"
+              />
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </el-main>
     </el-container>
+
+    <!-- User Setup Modal -->
+    <UserSetupModal v-if="showUserSetup" @saved="showUserSetup = false" />
 
     <!-- Create Project Dialog -->
     <el-dialog v-model="createDialogVisible" title="새 프로젝트" width="400px">
@@ -84,19 +110,52 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { projectsApi } from '../api/client.js'
+import GraphView from '../components/GraphView.vue'
+import UserSetupModal from '../components/UserSetupModal.vue'
+import { projectsApi, globalApi, userApi } from '../api/client.js'
 
 const router = useRouter()
 const projects = ref([])
+const activeTab = ref('projects')
+const globalGraphData = ref(null)
+const globalGraphLoading = ref(false)
 const loading = ref(true)
 const creating = ref(false)
 const createDialogVisible = ref(false)
 const createForm = ref({ name: '', description: '' })
+const showUserSetup = ref(false)
 
-onMounted(loadProjects)
+const globalProjectColors = computed(() => {
+  if (!globalGraphData.value?.projects) return null
+  return Object.fromEntries(
+    globalGraphData.value.projects.map(p => [p.id, p.color])
+  )
+})
+
+const globalProjectNames = computed(() => {
+  if (!globalGraphData.value?.projects) return null
+  return Object.fromEntries(
+    globalGraphData.value.projects.map(p => [p.id, p.name])
+  )
+})
+
+onMounted(async () => {
+  try {
+    await userApi.get()
+  } catch {
+    showUserSetup.value = true
+  }
+  await loadProjects()
+})
+
+watch(activeTab, async (tab) => {
+  if (tab === 'global-graph' && !globalGraphData.value) {
+    await loadGlobalGraph()
+  }
+})
 
 async function loadProjects() {
   loading.value = true
@@ -142,6 +201,22 @@ async function deleteProject(id) {
   }
 }
 
+async function loadGlobalGraph() {
+  globalGraphLoading.value = true
+  try {
+    const r = await globalApi.getGraph()
+    globalGraphData.value = r.data
+  } catch {
+    globalGraphData.value = { nodes: [], links: [], projects: [] }
+  } finally {
+    globalGraphLoading.value = false
+  }
+}
+
+function goToProject(projectId) {
+  router.push(`/projects/${projectId}`)
+}
+
 function statusLabel(s) {
   return { created: '생성됨', parsing: '파싱 중', ontology: '온톨로지', building: '구축 중', writing: '작성 중', ready: '완료', failed: '실패' }[s] || s
 }
@@ -166,6 +241,8 @@ function statusType(s) {
 .app-title { font-size: 22px; font-weight: bold; color: white; }
 .app-subtitle { font-size: 13px; opacity: 0.85; }
 .main { padding: 32px; }
+.home-tabs { width: 100%; }
+.global-graph-wrapper { height: 600px; }
 .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .project-card { cursor: pointer; transition: transform 0.15s; }
 .project-card:hover { transform: translateY(-2px); }
