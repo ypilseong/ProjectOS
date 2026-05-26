@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import networkx as nx
@@ -8,12 +9,17 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_MAX_ANALYSIS_CHARS = 6000
+_MAX_DRAFT_CHARS = 4000
+
 
 class AnalysisAgent:
     def __init__(self):
         self._llm = LLMClient()
 
     async def run(self, chunks: list[TextChunk], graph: nx.DiGraph | None = None) -> dict:
+        if not chunks:
+            raise ValueError("chunks must not be empty")
         full_text = "\n\n".join(c.text for c in chunks)
         graph_summary = self._graph_summary(graph)
 
@@ -45,12 +51,16 @@ class AnalysisAgent:
         )
 
     async def _analyze_issues(self, full_text: str, graph_summary: str) -> dict:
+        if len(full_text) > _MAX_ANALYSIS_CHARS:
+            logger.warning(
+                f"Full text truncated from {len(full_text)} to {_MAX_ANALYSIS_CHARS} chars for analysis"
+            )
         prompt = f"""다음 문서를 분석하여 약점과 개선 방향을 찾아주세요.
 
 그래프 분석 요약: {graph_summary}
 
 문서 내용:
-{full_text[:6000]}
+{full_text[:_MAX_ANALYSIS_CHARS]}
 
 JSON 형식으로 응답하세요 (한국어):
 {{
@@ -64,9 +74,17 @@ JSON 형식으로 응답하세요 (한국어):
     }}
   ]
 }}"""
-        return await self._llm.chat_json([{"role": "user", "content": prompt}])
+        try:
+            return await self._llm.chat_json([{"role": "user", "content": prompt}])
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"AnalysisAgent: LLM JSON parse error: {e}")
+            return {"summary": "", "issues": []}
 
     async def _generate_draft(self, full_text: str, issues: list[dict]) -> str:
+        if len(full_text) > _MAX_DRAFT_CHARS:
+            logger.warning(
+                f"Full text truncated from {len(full_text)} to {_MAX_DRAFT_CHARS} chars for draft"
+            )
         issues_text = "\n".join(
             f"- [{i.get('severity', 'medium')}] {i.get('category', '')}: {i.get('suggestion', '')}"
             for i in issues
@@ -77,7 +95,7 @@ JSON 형식으로 응답하세요 (한국어):
 {issues_text}
 
 원본 문서:
-{full_text[:4000]}
+{full_text[:_MAX_DRAFT_CHARS]}
 
 개선된 문서를 마크다운 형식으로 작성하세요. 원본 구조를 유지하되 제안된 개선사항을 반영하세요."""
         return await self._llm.chat([{"role": "user", "content": prompt}])

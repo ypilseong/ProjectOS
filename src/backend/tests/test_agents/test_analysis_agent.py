@@ -113,3 +113,12 @@ def test_graph_summary_empty_graph():
 
     agent = AnalysisAgent()
     assert agent._graph_summary(nx.DiGraph()) == "그래프 없음"
+
+
+@pytest.mark.asyncio
+async def test_analysis_agent_raises_on_empty_chunks():
+    from app.agents.analysis_agent import AnalysisAgent
+
+    agent = AnalysisAgent()
+    with pytest.raises(ValueError, match="chunks must not be empty"):
+        await agent.run([], None)
