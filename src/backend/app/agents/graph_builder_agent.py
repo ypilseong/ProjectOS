@@ -1,5 +1,4 @@
 import json
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -7,6 +6,7 @@ import networkx as nx
 
 from app.config import config
 from app.models.graph import GraphStats, Ontology, TextChunk
+from app.utils.entity_resolver import EntityResolver
 from app.utils.entity_validation import is_valid_entity, normalize_entity_type
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
@@ -23,6 +23,7 @@ class GraphBuilderAgent:
     def __init__(self):
         self._llm = LLMClient()
         self._fuzzy_threshold = config.FUZZY_MATCH_THRESHOLD
+        self._resolver = EntityResolver(fuzzy_threshold=self._fuzzy_threshold)
         self._user_context = self._load_user_context()
 
     @staticmethod
@@ -120,7 +121,7 @@ class GraphBuilderAgent:
             logger.info(f"Processing chunk {i}/{total}")
             try:
                 result = await self._extract_from_chunk(chunk, entity_types, edge_types)
-                self._merge_into_graph(graph, result, chunk, allowed_edge_set)
+                await self._merge_into_graph(graph, result, chunk, allowed_edge_set)
             except Exception as e:
                 logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
             if progress_callback:
@@ -172,7 +173,7 @@ Return only valid JSON in this exact shape:
 }}"""
         return await self._llm.chat_json([{"role": "user", "content": prompt}])
 
-    def _merge_into_graph(
+    async def _merge_into_graph(
         self, graph: nx.DiGraph, result: dict, chunk: TextChunk, allowed_edge_set: set[str] | None = None
     ):
         node_map: dict[str, str] = {}
@@ -184,7 +185,7 @@ Return only valid JSON in this exact shape:
                 logger.info(f"Skipping invalid entity: {etype}:{name}")
                 continue
 
-            existing = self._find_existing_node(graph, etype, name)
+            existing = await self._resolver.find_existing_node_async(graph, etype, name)
             if existing:
                 node_id = existing
                 sources = set(graph.nodes[node_id].get("source_files", []))
@@ -229,15 +230,7 @@ Return only valid JSON in this exact shape:
     def _find_existing_node(
         self, graph: nx.DiGraph, entity_type: str, name: str
     ) -> str | None:
-        for node_id in graph.nodes:
-            node = graph.nodes[node_id]
-            if node.get("type") == entity_type:
-                if self._fuzzy_match(node.get("name", ""), name):
-                    return node_id
-        return None
-
-    def _fuzzy_match(self, a: str, b: str) -> bool:
-        return SequenceMatcher(None, a.lower(), b.lower()).ratio() >= self._fuzzy_threshold
+        return self._resolver.find_existing_node(graph, entity_type, name)
 
     async def reextract_with_context(
         self,
