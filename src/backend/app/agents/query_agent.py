@@ -26,34 +26,46 @@ class QueryAgent:
             yield token
 
     def _search_graph(self, graph: nx.DiGraph, query: str) -> dict:
-        query_words = set(query.lower().split()) if query.strip() else set()
-        matched_nodes = []
+        query_lower = query.lower()
+        query_tokens = [t for t in query_lower.split() if len(t) > 1]
 
+        scored: list[tuple[float, dict]] = []
         for node_id, data in graph.nodes(data=True):
-            name = data.get("name", "").lower()
-            desc = data.get("description", "").lower()
-            if query_words and any(w in name or w in desc for w in query_words):
-                matched_nodes.append({
+            name = data.get("name", "")
+            desc = data.get("description", "") or ""
+            name_lower = name.lower()
+            desc_lower = desc.lower()
+
+            name_score = sum(2.0 for t in query_tokens if t in name_lower)
+            desc_score = sum(1.0 for t in query_tokens if t in desc_lower)
+            total = name_score + desc_score
+            if total > 0:
+                scored.append((total, {
                     "id": node_id,
                     "type": data.get("type"),
-                    "name": data.get("name"),
-                    "description": data.get("description"),
-                })
+                    "name": name,
+                    "description": desc,
+                }))
+
+        scored.sort(key=lambda x: -x[0])
+        matched_nodes = [item for _, item in scored[:10]]
 
         node_ids = {n["id"] for n in matched_nodes}
         connected_edges = []
-        for u, v, data in graph.edges(data=True):
+        for u, v, edata in graph.edges(data=True):
             if u in node_ids or v in node_ids:
                 connected_edges.append({
                     "source": graph.nodes[u].get("name", u),
                     "target": graph.nodes[v].get("name", v),
-                    "relation": data.get("relation", ""),
+                    "relation": edata.get("relation", ""),
                 })
 
         bfs_nodes = []
+        seen_bfs = set(node_ids)
         for node_id in list(node_ids)[:3]:
             for neighbor in list(graph.successors(node_id)) + list(graph.predecessors(node_id)):
-                if neighbor not in node_ids:
+                if neighbor not in seen_bfs:
+                    seen_bfs.add(neighbor)
                     ndata = graph.nodes[neighbor]
                     bfs_nodes.append({
                         "type": ndata.get("type"),

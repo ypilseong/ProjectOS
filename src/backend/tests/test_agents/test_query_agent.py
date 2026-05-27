@@ -85,3 +85,35 @@ async def test_stream_yields_tokens(sample_graph, sample_chunks):
 
     assert len(tokens) == 3
     assert "".join(tokens) == "답변 내용 입니다."
+
+
+def test_search_graph_finds_english_node_by_english_token():
+    import networkx as nx
+    from app.agents.query_agent import QueryAgent
+    g = nx.DiGraph()
+    g.add_node("Skill:Python", type="Skill", name="Python", description="Programming language")
+    agent = QueryAgent()
+    result = agent._search_graph(g, "Python 프로젝트")
+    assert any(n["name"] == "Python" for n in result["nodes"])
+
+
+def test_search_graph_name_match_scores_higher_than_description_match():
+    import networkx as nx
+    from app.agents.query_agent import QueryAgent
+    g = nx.DiGraph()
+    g.add_node("Project:NLP", type="Project", name="NLP 프로젝트", description="builds models")
+    g.add_node("Skill:Models", type="Skill", name="Models", description="NLP based models")
+    agent = QueryAgent()
+    result = agent._search_graph(g, "NLP")
+    assert result["nodes"][0]["name"] == "NLP 프로젝트"
+
+
+def test_search_graph_respects_max_node_limit():
+    import networkx as nx
+    from app.agents.query_agent import QueryAgent
+    g = nx.DiGraph()
+    for i in range(20):
+        g.add_node(f"Skill:s{i}", type="Skill", name=f"skill_{i}", description="test query")
+    agent = QueryAgent()
+    result = agent._search_graph(g, "query")
+    assert len(result["nodes"]) <= 10
