@@ -154,6 +154,36 @@ Return only valid JSON in this exact shape:
     def _fuzzy_match(self, a: str, b: str) -> bool:
         return SequenceMatcher(None, a.lower(), b.lower()).ratio() >= self._fuzzy_threshold
 
+    async def reextract_with_context(
+        self,
+        context_text: str,
+        source_file: str,
+        graph: nx.DiGraph,
+        entity_types: list[str],
+        edge_types: list[str],
+    ) -> int:
+        """Re-extract relations from combined context text and add new edges to graph.
+
+        Only adds edges between nodes that already exist in the graph.
+        Returns the number of new edges added.
+        """
+        from app.models.graph import TextChunk
+        synthetic = TextChunk(
+            chunk_id=f"reextract_{hash(context_text) & 0xFFFFFF:06x}",
+            text=context_text,
+            source_file=source_file,
+            file_type="txt",
+            page_num=None,
+            char_offset=0,
+        )
+        edges_before = graph.number_of_edges()
+        try:
+            result = await self._extract_from_chunk(synthetic, entity_types, edge_types)
+            self._merge_into_graph(graph, result, synthetic, set(edge_types))
+        except Exception as e:
+            logger.warning(f"reextract_with_context failed ({source_file}): {e}")
+        return graph.number_of_edges() - edges_before
+
     def save(self, graph: nx.DiGraph, path: str):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         data = nx.node_link_data(graph)

@@ -4,10 +4,41 @@ Last updated: 2026-05-27
 
 ## Current Objective
 
-Category 허브 노드 구조 완료. 다음 작업 후보:
-1. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
-2. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
-3. 추출 프롬프트에 사용자 이름 컨텍스트 주입 (동일 인물 중복 추출 방지)
+고립 노드 cascade 재추출 구현 완료. 다음 작업 후보:
+1. 그래프 재빌드로 고립 노드 감소 효과 실측 확인
+2. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
+3. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
+
+## Completed In This Session (2026-05-27 Isolated Node Cascade Re-extraction)
+
+### 배경
+
+173개 노드 중 72개(42%)가 고립(degree=0). 원인: LLM이 엔티티는 추출하지만 청크에 명시적 주어가 없으면 관계 추출 실패 (예: CV 목록 형식 `● Total GPA 4.35/4.50`).
+
+### 변경 내역
+
+- `app/utils/isolated_reextract.py` (신규): `reextract_isolated_nodes()` cascade 함수
+  - **Pass 2**: 고립 노드의 source_file에서 노드명을 언급하는 청크 탐색 → ±2 이웃 청크 윈도우로 재추출
+  - **Pass 3**: 여전히 고립이면 같은 파일의 첫 2청크(문서 헤더) 추가 후 재추출
+  - 동일 컨텍스트 윈도우 중복 LLM 호출 방지 (seen_contexts 캐시)
+  - Category 타입 노드는 스킵
+- `app/agents/graph_builder_agent.py`: `reextract_with_context()` 메서드 추가
+  - 합성 청크로 `_extract_from_chunk` 호출 → `_merge_into_graph`로 새 엣지만 추가
+  - 새 노드 추가도 허용 (fuzzy match로 기존 노드 우선 매칭)
+- `app/api/graph.py` `_run_graph()`: dedup → **reextract_isolated_nodes** → add_category_hubs 순서
+  - progress 72~80% 구간에서 재추출 진행 메시지 표시
+- `tests/test_utils/test_isolated_reextract.py` (신규): 9개 테스트
+
+### 검증
+
+- `python3 -m pytest tests/ -v` → **114 passed**
+- 실제 고립 노드 감소 효과는 다음 그래프 재빌드 시 확인 예정
+
+### 알려진 한계
+
+- Pass 2/3에서도 실패하면 노드는 고립 유지 (제거하지 않음)
+- 재추출 시 새 잘못된 노드가 추가될 가능성 있음 (entity_validation 필터가 1차 방어)
+- LLM이 같은 내용을 반복 추출하는 오버헤드: 72개 고립 → seen_contexts 캐시로 실제 호출은 ~15-25회 예상
 
 ## Completed In This Session (2026-05-27 Category Hub Restructure)
 

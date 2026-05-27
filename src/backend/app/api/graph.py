@@ -231,6 +231,28 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         if merged_count:
             logger.info(f"Merged {merged_count} duplicate nodes")
 
+        from app.utils.isolated_reextract import reextract_isolated_nodes
+        isolated_before = sum(1 for n in graph.nodes if graph.degree(n) == 0)
+        if isolated_before:
+            task_manager.update(
+                task_id,
+                message=f"고립 노드 재추출 중... (0/{isolated_before})",
+                progress=72,
+            )
+
+            def on_reextract_progress(step: int, total: int, name: str):
+                task_manager.update(
+                    task_id,
+                    message=f"고립 노드 재추출 중... ({step}/{total}) {name[:20]}",
+                    progress=72 + int(step / total * 8),
+                )
+
+            graph, reconnected = await reextract_isolated_nodes(
+                graph, chunks, graph_agent, ontology,
+                progress_callback=on_reextract_progress,
+            )
+            logger.info(f"Isolated re-extraction: {reconnected}/{isolated_before} connected")
+
         from app.utils.graph_restructure import add_category_hubs
         graph, hubs_added = add_category_hubs(graph)
         if hubs_added:
