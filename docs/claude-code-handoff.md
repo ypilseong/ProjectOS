@@ -4,21 +4,75 @@ Last updated: 2026-05-27
 
 ## Current Objective
 
-User requested: “테스트 끝나면 더 진행하지 말고 claude code handoff 문서에 업데이트 내용과 진행 방향 작성하고 멈추세요.”
+P1/P2/P3 improvements implemented and verified. All 8 tasks complete. Backend running on port 8001 with latest code.
 
-Stop point:
-1. Backend full tests passed: `134 passed, 24 warnings`.
-2. Frontend build passed with the existing large chunk warning.
-3. Backend was stopped after the user requested no further progress.
-4. Graph regeneration was started but intentionally interrupted before completion. Do not treat the latest graph/vault as regenerated from the newest code until the graph task is rerun.
-5. Commit was not created because the latest user instruction said to stop after updating this handoff.
+## 다음 작업 후보
 
-Next recommended steps:
-1. Review the pending diff, then commit if desired.
-2. Restart backend and rerun graph generation for project `29347d1e`.
-3. Confirm the regenerated graph has reduced `Skill`, `Role`, `Institution`, and `Event` noise.
-4. Decide whether `INTERESTED_IN`, `CONTAINS`, and `IDENTICAL` should remain dropped or become explicit relation types.
-5. Consider canonical-name cleanup for long `Project`/`Achievement` nodes.
+1. **그래프 재생성** — 새 코드(EntityResolver 임베딩 매칭)로 프로젝트 `29347d1e` 그래프를 재빌드해서 품질 변화 확인
+2. **고립 노드 필터 강화** — 현재 24개 고립 노드 중 노이즈성 Skill(`발언자 특정`, `풍력 발전기` 등) entity_validation에 추가
+3. **`INTERESTED_IN`, `CONTAINS`, `IDENTICAL` 관계** — 계속 버릴지 명시적 관계로 추가할지 결정
+4. **Graph health UI** — `/api/projects/{id}/graph/health` 결과를 프론트엔드에 표시하는 진단 패널
+5. **WritingAgent** — 그래프 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트
+
+## Completed In This Session (2026-05-27 P1/P2/P3 Improvements)
+
+### 변경 내역
+
+**P1 — 증분 처리 + 엔티티 해소 (iText2KG 패턴)**
+
+- `app/services/document_hash_store.py` (신규)
+  - 파일별 MD5 해시 + 온톨로지 해시를 `hashes.json`에 저장
+  - `get_changed_files()` — 온톨로지 변경 시 전체, 파일 변경 시 해당 파일만 반환
+- `app/utils/entity_resolver.py` (신규)
+  - `find_existing_node()` — SequenceMatcher fuzzy match (동기)
+  - `find_existing_node_async()` — fuzzy 우선, BGE-M3 코사인 유사도 fallback (비동기)
+  - `EMBEDDING_BASE_URL` 미설정 시 임베딩 완전 스킵
+- `app/agents/graph_builder_agent.py` (수정)
+  - `_find_existing_node` → EntityResolver 위임
+  - `_fuzzy_match` 제거 (EntityResolver 내부로 이동)
+  - `_merge_into_graph` → `async def`로 변경, `find_existing_node_async` 호출
+- `app/api/graph.py` (수정)
+  - `_run_graph`에 DocumentHashStore 연동
+  - `incremental=True`일 때 변경된 파일의 청크만 처리, 나머지 스킵
+  - 그래프 저장 후 `hash_store.save()`로 해시 영속화
+
+**P2 — Index-First QueryAgent**
+
+- `app/agents/obsidian_writer_agent.py` (수정)
+  - `_write_index(vault, graph)` 추가 — 엔티티 이름을 타입별로 정리한 `_index.md` 생성
+  - `run()` 종료 직전에 호출
+- `app/agents/query_agent.py` (수정)
+  - `_search_graph` 재작성: 이름 substring 매칭 2.0점, 설명 단어 매칭 1.0점으로 점수화
+  - 결과 점수 내림차순 정렬, 최대 10개 제한
+  - BFS `seen_bfs` 세트로 중복 제거
+
+**P3 — 그래프 헬스체크 API**
+
+- `app/utils/graph_health.py` (신규)
+  - `check_isolated_nodes()` — degree 0 노드
+  - `check_weak_components()` — 약하게 연결된 컴포넌트, 크기 내림차순
+  - `check_duplicate_candidates()` — 같은 타입 내 유사 이름 쌍 (SequenceMatcher)
+  - `check_hub_nodes()` — degree 초과 노드
+  - `run_health_check()` — 4가지 결과 + summary 반환
+- `app/api/graph.py` (수정)
+  - `GET /api/projects/{id}/graph/health` 엔드포인트 추가
+
+### 검증
+
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `156 passed, 24 warnings`
+- Smoke test (project `29347d1e`):
+  - 그래프: 노드 243개, 엣지 267개, 고립 24개
+  - Health API: `components=25, duplicate_candidates=0, hub_nodes=3`
+- Git commits: 8개 (`6ed446c` → `6f86e37`)
+- Push: 완료
+
+### 알려진 잔여 이슈
+
+- 고립 노드 24개 중 상당수가 노이즈성 Skill (entity_validation 필터로 추가 제거 가능)
+- `_index.md` 생성은 vault write 시에만 업데이트 (그래프 재빌드 후 vault 재실행 필요)
+- 임베딩 기반 EntityResolver는 새 그래프 빌드 시 처음 효과 확인 가능
 
 ## Completed In This Session (2026-05-27 README + Timeout Follow-up)
 
