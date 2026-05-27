@@ -88,6 +88,53 @@ async def test_graph_builder_filters_generic_person_entities(sample_ontology):
     assert "Skill:Python" in graph.nodes
 
 
+def test_user_context_includes_both_names(tmp_path, monkeypatch):
+    import json
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    user_json = tmp_path / "user.json"
+    user_json.write_text(json.dumps({"name": "양필성", "display_name": "Pilseong Yang"}))
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    agent = GraphBuilderAgent()
+    assert "양필성" in agent._user_context
+    assert "Pilseong Yang" in agent._user_context
+    assert "implicit subject" in agent._user_context
+
+
+def test_user_context_empty_when_no_user_json(tmp_path, monkeypatch):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(tmp_path / "missing.json"))
+    agent = GraphBuilderAgent()
+    assert agent._user_context == ""
+
+
+@pytest.mark.asyncio
+async def test_prompt_contains_user_context(tmp_path, monkeypatch, sample_ontology):
+    import json
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    user_json = tmp_path / "user.json"
+    user_json.write_text(json.dumps({"name": "양필성", "display_name": "Pilseong Yang"}))
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    agent = GraphBuilderAgent()
+    chunk = TextChunk("id1", "● Total GPA 4.35/4.50", "cv.pdf", "pdf", 1, 0)
+
+    captured = {}
+
+    async def fake_chat_json(messages, **kw):
+        captured["prompt"] = messages[0]["content"]
+        return {"entities": [], "relations": []}
+
+    with patch.object(agent._llm, "chat_json", side_effect=fake_chat_json):
+        await agent._extract_from_chunk(chunk, ["Person", "Achievement"], ["ACHIEVED"])
+
+    assert "양필성" in captured["prompt"]
+    assert "Pilseong Yang" in captured["prompt"]
+
+
 def test_fuzzy_match_finds_similar():
     from app.agents.graph_builder_agent import GraphBuilderAgent
     import networkx as nx

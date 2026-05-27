@@ -18,6 +18,25 @@ class GraphBuilderAgent:
     def __init__(self):
         self._llm = LLMClient()
         self._fuzzy_threshold = config.FUZZY_MATCH_THRESHOLD
+        self._user_context = self._load_user_context()
+
+    @staticmethod
+    def _load_user_context() -> str:
+        """Build a prompt snippet from user.json (name + display_name)."""
+        try:
+            data = json.loads(Path(config.USER_CONFIG_PATH).read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        names = [v.strip() for k in ("name", "display_name") if (v := data.get(k, ""))]
+        if not names:
+            return ""
+        names_str = " / ".join(names)
+        return (
+            f"Document owner: {names_str}. "
+            "When the subject of an item is not explicitly stated "
+            "(e.g. bullet-list entries in a CV or resume), "
+            f"treat {names_str} as the implicit subject and extract relations accordingly."
+        )
 
     async def run(
         self,
@@ -56,8 +75,9 @@ class GraphBuilderAgent:
     async def _extract_from_chunk(
         self, chunk: TextChunk, entity_types: list[str], edge_types: list[str]
     ) -> dict:
+        user_ctx = f"\n{self._user_context}\n" if self._user_context else ""
         prompt = f"""Extract entities and relations from the text below.
-
+{user_ctx}
 Allowed entity types: {', '.join(entity_types)}
 Allowed relation types: {', '.join(edge_types)}
 
@@ -164,7 +184,8 @@ Return only valid JSON in this exact shape:
     ) -> int:
         """Re-extract relations from combined context text and add new edges to graph.
 
-        Only adds edges between nodes that already exist in the graph.
+        Only adds edges between nodes that ALREADY exist in the graph.
+        Never creates new nodes — this prevents the node explosion problem.
         Returns the number of new edges added.
         """
         from app.models.graph import TextChunk
@@ -179,10 +200,45 @@ Return only valid JSON in this exact shape:
         edges_before = graph.number_of_edges()
         try:
             result = await self._extract_from_chunk(synthetic, entity_types, edge_types)
-            self._merge_into_graph(graph, result, synthetic, set(edge_types))
+            self._merge_edges_only(graph, result, synthetic, set(edge_types))
         except Exception as e:
             logger.warning(f"reextract_with_context failed ({source_file}): {e}")
         return graph.number_of_edges() - edges_before
+
+    def _merge_edges_only(
+        self,
+        graph: nx.DiGraph,
+        result: dict,
+        chunk: "TextChunk",
+        allowed_edge_set: set[str] | None = None,
+    ) -> None:
+        """Add edges between existing nodes only — never creates new nodes."""
+        node_map: dict[str, str] = {}
+        for entity in result.get("entities", []):
+            etype = entity.get("type", "").strip()
+            name = entity.get("name", "").strip()
+            existing = self._find_existing_node(graph, etype, name)
+            if existing:
+                node_map[name] = existing
+
+        for rel in result.get("relations", []):
+            src_name = rel.get("source", "")
+            tgt_name = rel.get("target", "")
+            relation = rel.get("relation", "")
+            if not src_name or not tgt_name or not relation:
+                continue
+            if allowed_edge_set and relation not in allowed_edge_set:
+                continue
+            src_id = node_map.get(src_name)
+            tgt_id = node_map.get(tgt_name)
+            if src_id and tgt_id and not graph.has_edge(src_id, tgt_id):
+                graph.add_edge(
+                    src_id,
+                    tgt_id,
+                    relation=relation,
+                    confidence=rel.get("confidence", 1.0),
+                    source_chunk_id=chunk.chunk_id,
+                )
 
     def save(self, graph: nx.DiGraph, path: str):
         Path(path).parent.mkdir(parents=True, exist_ok=True)

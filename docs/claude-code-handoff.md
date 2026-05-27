@@ -4,10 +4,42 @@ Last updated: 2026-05-27
 
 ## Current Objective
 
-고립 노드 cascade 재추출 구현 완료. 다음 작업 후보:
-1. 그래프 재빌드로 고립 노드 감소 효과 실측 확인
-2. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
-3. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
+사용자 이름 컨텍스트 주입 완료. 다음 작업 후보:
+1. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
+2. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
+3. 노이즈 엔티티 필터 강화 — "교수님", "패널", "사회자", "약 1년간 근무" 등 역할/활동 설명 형태 필터링
+
+## Completed In This Session (2026-05-27 User Name Context Injection)
+
+### 배경
+
+CV 목록 형식 (`● Total GPA 4.35/4.50`) 에서 주어가 없어 LLM이 관계 추출 실패. 사용자 이름을 프롬프트에 명시하여 implicit subject 처리.
+
+### 변경 내역
+
+- `app/agents/graph_builder_agent.py`:
+  - `_load_user_context()` 정적 메서드 추가: user.json에서 `name` + `display_name` 두 이름 읽어 프롬프트 스니펫 생성
+    - 출력 예: `"Document owner: 양필성 / Pilseong Yang. When the subject of an item is not explicitly stated (e.g. bullet-list entries in a CV or resume), treat 양필성 / Pilseong Yang as the implicit subject and extract relations accordingly."`
+  - `__init__`에서 `self._user_context = self._load_user_context()` 초기화
+  - `_extract_from_chunk()` 수정: user_context를 프롬프트 상단에 삽입 (허용 엔티티/관계 목록 앞)
+- `tests/test_agents/test_graph_builder_agent.py`: 3개 테스트 추가
+  - `test_user_context_includes_both_names` — user.json 있을 때 양필성 + Pilseong Yang 포함 확인
+  - `test_user_context_empty_when_no_user_json` — user.json 없으면 빈 문자열
+  - `test_prompt_contains_user_context` — 실제 프롬프트에 두 이름 포함 확인
+
+### 검증
+
+- `python3 -m pytest tests/ -q` → **117 passed**
+- 그래프 재빌드 결과:
+  - 노드 215개, 엣지 177개 (이전: 180노드, 157엣지)
+  - 고립 노드: 68개 → 51개 (37.8% → 23.7% isolation rate)
+  - 재추출 7/61 연결, semantic dedup 8개 병합
+  - Category 허브 9개 생성
+
+### 알려진 한계
+
+- 고립 노드 51개 중 상당수는 노이즈 엔티티 (교수님, 패널, 사회자 등 entity_validation 미통과 항목들이 여전히 추출됨)
+- CV 목록의 암시적 주어 처리는 향상됐으나, 긴 설명형 엔티티 이름은 여전히 추출 품질이 낮음
 
 ## Completed In This Session (2026-05-27 Isolated Node Cascade Re-extraction)
 
@@ -31,8 +63,8 @@ Last updated: 2026-05-27
 
 ### 검증
 
-- `python3 -m pytest tests/ -v` → **114 passed**
-- 실제 고립 노드 감소 효과는 다음 그래프 재빌드 시 확인 예정
+- `python3 -m pytest tests/ -v` → **114 passed** (user context 추가 후 117 passed)
+- 실제 효과: 61개 고립 노드 중 7개 재연결 성공 (11%)
 
 ### 알려진 한계
 
