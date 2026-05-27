@@ -201,6 +201,8 @@ def _build_tree(path: Path) -> list:
 
 async def _run_parse(task_id: str, project_id: str, paths: list[str], file_type: str):
     from app.agents.parser_agent import ParserAgent
+    from app.utils.logger import reset_log_project, set_log_project
+    log_token = set_log_project(project_id)
     try:
         total_files = len(paths)
         task_manager.update(
@@ -252,13 +254,17 @@ async def _run_parse(task_id: str, project_id: str, paths: list[str], file_type:
             project.status = ProjectStatus.FAILED
             project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)
 
 
 async def _run_analysis(task_id: str, project_id: str):
     import networkx as nx
     from app.agents.analysis_agent import AnalysisAgent
     from app.models.graph import TextChunk
+    from app.utils.logger import reset_log_project, set_log_project
 
+    log_token = set_log_project(project_id)
     try:
         task_manager.update(
             task_id,
@@ -293,6 +299,8 @@ async def _run_analysis(task_id: str, project_id: str):
         )
     except Exception as e:
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)
 
 
 def _find_user_person(graph, user_name: str, display_name: str) -> str | None:
@@ -320,9 +328,10 @@ async def _run_profiles(task_id: str, project_id: str):
     import networkx as nx
     from app.agents.obsidian_writer_agent import ObsidianWriterAgent
     from app.agents.profile_agent import ProfileAgent
-    from app.utils.logger import get_logger
+    from app.utils.logger import get_logger, reset_log_project, set_log_project
 
     logger = get_logger(__name__)
+    log_token = set_log_project(project_id)
     try:
         task_manager.update(task_id, status=TaskStatus.RUNNING, message="그래프 로딩 중...", progress=10)
         proj_dir = Path(config.PROJECTS_DIR) / project_id
@@ -380,3 +389,5 @@ async def _run_profiles(task_id: str, project_id: str):
             project.status = ProjectStatus.FAILED
             project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)

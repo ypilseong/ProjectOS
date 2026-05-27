@@ -62,9 +62,10 @@ def test_ontology_has_fixed_types():
     assert "Skill" in agent.FIXED_ENTITY_TYPES
     assert "Organization" in agent.FIXED_ENTITY_TYPES
     assert "Publication" in agent.FIXED_ENTITY_TYPES
+    assert "Technology" not in agent.FIXED_ENTITY_TYPES
     assert "Keyword" not in agent.FIXED_ENTITY_TYPES
     assert "Concept" not in agent.FIXED_ENTITY_TYPES
-    assert len(agent.FIXED_ENTITY_TYPES) == 10
+    assert len(agent.FIXED_ENTITY_TYPES) == 9
 
 
 def test_ontology_has_fixed_edge_types():
@@ -73,9 +74,10 @@ def test_ontology_has_fixed_edge_types():
     assert "WORKED_AT" in agent.FIXED_EDGE_TYPES
     assert "USES_SKILL" in agent.FIXED_EDGE_TYPES
     assert "DEVELOPED" in agent.FIXED_EDGE_TYPES
+    assert "HAS_ROLE" in agent.FIXED_EDGE_TYPES
     assert "HAS_KEYWORD" not in agent.FIXED_EDGE_TYPES
     assert "RELATED_TO" not in agent.FIXED_EDGE_TYPES
-    assert len(agent.FIXED_EDGE_TYPES) == 10
+    assert len(agent.FIXED_EDGE_TYPES) == 11
 
 
 @pytest.mark.asyncio

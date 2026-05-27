@@ -138,7 +138,7 @@ async def test_dedup_does_not_merge_different_types(monkeypatch):
     monkeypatch.setattr("app.config.config.EMBEDDING_BASE_URL", "http://fake:1234")
     monkeypatch.setattr("app.config.config.SEMANTIC_DEDUP_THRESHOLD", 0.88)
 
-    g = _make_graph(("Skill", "NLP"), ("Technology", "NLP"))
+    g = _make_graph(("Skill", "NLP"), ("Project", "NLP"))
 
     base = _unit_vec(4, 0)
 
@@ -173,6 +173,26 @@ def test_merge_user_persons_merges_name_and_display_name(tmp_path, monkeypatch):
     # Edge should be redirected to the surviving node
     surviving = person_nodes[0]
     assert g.has_edge(surviving, "Skill:Python")
+
+
+def test_merge_user_persons_merges_aliases(tmp_path, monkeypatch):
+    user_json = tmp_path / "user.json"
+    user_json.write_text(json.dumps({
+        "name": "양필성",
+        "display_name": "Pilseong Yang",
+        "aliases": ["Phil"],
+    }))
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    g = _make_graph(("Person", "Phil"), ("Person", "양필성"), ("Skill", "Python"))
+    g.add_edge("Person:Phil", "Skill:Python", relation="USES_SKILL")
+
+    g, merged = merge_user_persons(g)
+
+    assert merged == 1
+    assert "Person:Phil" not in g
+    assert "Person:양필성" in g
+    assert g.has_edge("Person:양필성", "Skill:Python")
 
 
 def test_merge_user_persons_skips_when_no_user_json(tmp_path, monkeypatch):

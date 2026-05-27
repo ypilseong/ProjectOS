@@ -18,7 +18,6 @@ TYPE_TO_FOLDER = {
     "Skill": "Skills",
     "Organization": "Organizations",
     "Publication": "Publications",
-    "Technology": "Technologies",
     "Role": "Roles",
     "Achievement": "Achievements",
     "Event": "Events",
@@ -46,7 +45,11 @@ class ObsidianWriterAgent:
         self._setup_vault(vault)
         profile_map = {p.name: p for p in (profiles or [])}
 
-        nodes = list(graph.nodes(data=True))
+        nodes = [
+            (node_id, data)
+            for node_id, data in graph.nodes(data=True)
+            if data.get("type") != "Category"
+        ]
         total = len(nodes)
         for i, (node_id, data) in enumerate(nodes, start=1):
             ntype = data.get("type", "Unknown")

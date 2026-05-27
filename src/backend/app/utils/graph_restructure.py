@@ -1,10 +1,7 @@
-import json
-from pathlib import Path
-
 import networkx as nx
 
-from app.config import config
 from app.utils.logger import get_logger
+from app.utils.user_config import get_user_name_variants, load_user_config
 
 logger = get_logger(__name__)
 
@@ -12,7 +9,6 @@ logger = get_logger(__name__)
 _HUB_CONFIG: dict[str, tuple[str, str]] = {
     "Achievement":  ("Category:Achievements",  "Achievements"),
     "Skill":        ("Category:Skills",        "Skills"),
-    "Technology":   ("Category:Technologies",  "Technologies"),
     "Project":      ("Category:Projects",      "Projects"),
     "Role":         ("Category:Roles",         "Roles"),
     "Organization": ("Category:Organizations", "Organizations"),
@@ -27,12 +23,11 @@ _PEOPLE_HUB_NAME = "People"
 
 def _load_user_person_ids(graph: nx.DiGraph) -> set[str]:
     """Return node IDs that belong to the user (matched via user.json name variants)."""
-    try:
-        data = json.loads(Path(config.USER_CONFIG_PATH).read_text(encoding="utf-8"))
-    except Exception:
+    data = load_user_config()
+    if not data:
         return set()
 
-    variants = {(data.get(k) or "").strip().lower() for k in ("name", "display_name")} - {""}
+    variants = set(get_user_name_variants(data))
     return {
         n for n, d in graph.nodes(data=True)
         if d.get("type") == "Person" and d.get("name", "").strip().lower() in variants

@@ -80,7 +80,6 @@ const NODE_COLORS = {
   Skill: '#E8A838',
   Organization: '#9B59B6',
   Publication: '#E74C3C',
-  Technology: '#1ABC9C',
   Role: '#E67E22',
   Achievement: '#27AE60',
   Event: '#2980B9',

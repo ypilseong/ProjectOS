@@ -101,3 +101,14 @@ def test_delta_mode_preserves_existing(tmp_path, sample_graph, sample_profile):
     writer.run(sample_graph, [sample_profile], vault_path=str(tmp_path), delta=True)
     updated = note_path.read_text()
     assert "My custom content" in updated
+
+
+def test_writer_skips_category_notes(tmp_path, sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    sample_graph.add_node("Category:Skills", type="Category", name="Skills", source_files=[])
+    sample_graph.add_edge("Person:Yang Pilseong", "Category:Skills", relation="HAS")
+
+    writer = ObsidianWriterAgent()
+    writer.run(sample_graph, vault_path=str(tmp_path))
+
+    assert not (tmp_path / "Misc" / "Skills.md").exists()

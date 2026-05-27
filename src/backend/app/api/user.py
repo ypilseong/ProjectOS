@@ -21,9 +21,16 @@ async def get_user():
 
 @router.post("")
 async def set_user(body: dict):
+    aliases = body.get("aliases", [])
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    if not isinstance(aliases, list):
+        aliases = []
+    aliases = [alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip()]
     data = {
         "name": body.get("name", ""),
         "display_name": body.get("display_name") or body.get("name", ""),
+        "aliases": aliases,
     }
     path = Path(config.USER_CONFIG_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)

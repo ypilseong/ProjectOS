@@ -4,10 +4,183 @@ Last updated: 2026-05-27
 
 ## Current Objective
 
-사용자 이름 컨텍스트 주입 완료. 다음 작업 후보:
-1. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
-2. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
-3. 노이즈 엔티티 필터 강화 — "교수님", "패널", "사회자", "약 1년간 근무" 등 역할/활동 설명 형태 필터링
+User requested: “테스트 끝나면 더 진행하지 말고 claude code handoff 문서에 업데이트 내용과 진행 방향 작성하고 멈추세요.”
+
+Stop point:
+1. Backend full tests passed: `134 passed, 24 warnings`.
+2. Frontend build passed with the existing large chunk warning.
+3. Backend was stopped after the user requested no further progress.
+4. Graph regeneration was started but intentionally interrupted before completion. Do not treat the latest graph/vault as regenerated from the newest code until the graph task is rerun.
+5. Commit was not created because the latest user instruction said to stop after updating this handoff.
+
+Next recommended steps:
+1. Review the pending diff, then commit if desired.
+2. Restart backend and rerun graph generation for project `29347d1e`.
+3. Confirm the regenerated graph has reduced `Skill`, `Role`, `Institution`, and `Event` noise.
+4. Decide whether `INTERESTED_IN`, `CONTAINS`, and `IDENTICAL` should remain dropped or become explicit relation types.
+5. Consider canonical-name cleanup for long `Project`/`Achievement` nodes.
+
+## Completed In This Session (2026-05-27 README + Timeout Follow-up)
+
+### 변경 내역
+
+- `README.md`
+  - 프로젝트 개요, stack, local run, config, project-specific logs, test commands를 간단히 작성.
+- `app/config.py`
+  - `LLM_REQUEST_TIMEOUT: 120.0` 추가.
+- `app/utils/llm_client.py`
+  - OpenAI-compatible LLM 호출을 `asyncio.wait_for()`로 감싸서 chunk 처리 중 무기한 대기를 줄임.
+- `app/api/graph.py`
+  - 기존 `ontology.json`이 오래되어도 최신 `OntologyAgent.FIXED_EDGE_TYPES`가 graph build 시 보강되도록 처리.
+  - 이 보강은 `HAS_ROLE`이 기존 ontology 파일에 없어서 계속 invalid relation으로 skip되던 문제를 해결하기 위한 것.
+
+### 검증
+
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `134 passed, 24 warnings`
+- Frontend production build:
+  - `cd src/frontend && npm run build`
+  - Result: success
+  - Warning remains: Vite large chunk over 500 kB
+- `git diff --check`
+  - Result: clean
+
+### 실행 상태
+
+- Backend was restarted once after the timeout/fixed-edge changes.
+- Graph task `f34dcf5c-0051-487a-976a-381ff3d3066f` was started, reached at least chunk `21/39`, then backend was stopped due to the user's latest instruction to stop.
+- Previous graph task `ce0006da-765b-4648-a76e-cfe6acf678be` stalled around chunk `32/39`; this was the reason for adding explicit LLM timeout.
+- Backend is currently stopped.
+- Frontend dev server may still be running on `5174`.
+
+## Completed In This Session (2026-05-27 Alias + Noise Cleanup)
+
+### 핵심 판단
+
+- `Skill`/`Technology`는 계속 단일 `Skill`로 유지.
+- 사용자 별칭은 LLM 프롬프트, Person 정규화, Person merge, Category hub 기준에서 모두 같은 이름 variant로 취급.
+- `HAS_ROLE`은 실제 career graph에서 자연스러운 Person → Role 관계라 고정 관계에 추가.
+- `APPLIED_TO`는 새 관계로 늘리지 않고, Project/Skill 방향에 따라 `USES_SKILL`로 정규화.
+- `INTERESTED_IN`, `CONTAINS`, `IDENTICAL`은 의미가 넓거나 dedup 정책과 충돌할 수 있어 아직 버림.
+
+### 변경 내역
+
+- `app/utils/user_config.py` 신규
+  - user.json의 `name`, `display_name`, `aliases`를 공통 variant 목록으로 제공
+  - 문자열 alias와 배열 alias 모두 처리
+- `src/backend/user.json`
+  - `aliases: ["Phil"]` 추가
+- `app/api/user.py`
+  - `aliases` 저장/조회 스키마 추가
+  - 빈 alias는 저장하지 않음
+- `app/agents/graph_builder_agent.py`
+  - 프롬프트의 document owner context에 aliases 포함
+  - Person name normalization에서 alias도 canonical user name으로 병합
+  - `APPLIED_TO Skill -> Project`를 `Project -> Skill / USES_SKILL`로 뒤집음
+  - `APPLIED_TO Project -> Skill`은 `USES_SKILL`로 변환
+  - `HAS_ROLE` 프롬프트 지침 추가
+- `app/agents/ontology_agent.py`
+  - fixed edge type에 `HAS_ROLE` 추가
+- `app/utils/entity_validation.py`
+  - `4학년`, `LLM팀 근무`, `연구자`, `리더`, `석사`, `panelists`, `Presenter`, `Jeju`, `긍정적인 에너지 전달`, `사회자 언급 분석`, `패널 정보 분석`, `30% performance improvement as Skill` 등 노이즈 필터 추가
+- `app/utils/semantic_dedup.py`
+  - user Person merge에서 aliases 지원
+  - canonical은 alias가 아니라 `name` 우선으로 선택
+- `app/utils/graph_restructure.py`
+  - category hub center 판정에 aliases 포함
+
+### 검증
+
+- Targeted backend tests:
+  - `python3 -m pytest tests/test_utils/test_entity_validation.py tests/test_agents/test_graph_builder_agent.py tests/test_utils/test_semantic_dedup.py tests/test_api/test_user_api.py tests/test_utils/test_graph_restructure.py -q`
+  - Result: `48 passed`
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `134 passed, 24 warnings`
+
+## Completed In This Session (2026-05-27 Project Logs + Skill Unification)
+
+### 핵심 판단
+
+- 현재 UI 목적은 핵심 키워드/역량 그래프 시각화이므로 `Skill`과 `Technology`를 분리하지 않기로 함.
+- `Technology`는 `Skill`로 흡수. 새 ontology에는 `Technology`를 생성하지 않고, 기존 graph/ontology에 남아 있는 `Technology`도 runtime에서 `Skill`로 정규화.
+
+### 변경 내역
+
+- `app/agents/ontology_agent.py`
+  - 고정 엔티티 타입 10개 → 9개: `Technology` 제거
+  - 기술 키워드, 도구, 프레임워크, 모델명은 모두 `Skill`로 분류하도록 프롬프트 수정
+- `app/agents/graph_builder_agent.py`
+  - ontology entity type 로드 시 `Technology -> Skill` 정규화
+  - LLM 응답 entity type도 `Technology -> Skill`로 정규화
+  - user.json의 `name` + `display_name`이 합쳐져 나오는 `양필성 / Pilseong Yang`을 canonical `양필성`으로 정규화
+  - 관계 alias 추가:
+    - `LEAD_BY -> LED_BY`
+    - `USED_IN` with `Skill -> Project`를 `Project -> Skill / USES_SKILL`로 뒤집어 저장
+  - LLM이 `null` source/target/type/relation을 반환해도 chunk 전체가 실패하지 않도록 null-safe 처리
+  - Project-Skill 관계 추출 프롬프트 강화
+- `app/utils/graph_normalization.py` 신규
+  - `normalize_ontology_types()`
+  - `normalize_graph_entity_types()`
+  - legacy graph/ontology의 `Technology`를 `Skill`로 변환하고 충돌 시 노드 병합
+- `app/utils/entity_validation.py`
+  - `Technology` alias는 허용하되 canonical type은 `Skill`
+  - Person/Role/Project/Organization/Event/Achievement 노이즈 필터 강화
+  - `교수님`, `사회자`, `패널`, `학부 4학년`, `석사 과정`, `약 1년간 근무`, `GPT/Gemini as Project` 등 주요 오분류 제거
+- `app/utils/logger.py`
+  - project context 기반 파일 라우팅 추가
+  - background 작업 중 agent/backend 로그가 `logs/projects/{project_id}/projectos.log`에도 저장됨
+- `app/services/task_manager.py`
+  - task 생성/업데이트를 `logs/projects/{project_id}/tasks.log` JSONL로 저장
+  - UI 진행률과 동일한 정량 메시지가 프로젝트별로 누적됨
+- `app/api/graph.py`, `app/api/projects.py`
+  - parse/ontology/graph/profile/analysis background task에 project log context 주입
+  - graph/ontology/stats/global graph 조회 시 legacy `Technology`도 `Skill`로 정규화해서 반환
+- `app/agents/obsidian_writer_agent.py`
+  - `Category` 노드는 Obsidian markdown 노트로 쓰지 않음. UI graph 구조용으로만 유지
+- Frontend
+  - `Technology` 색상/표시 제거
+  - About 설명을 9개 엔티티 타입 기준으로 수정
+
+### 최종 재생성 결과
+
+- 최종 task: `628cc62c-6de0-4635-94c5-c70323487594`
+- 완료 메시지: `완료: 노드 203개, 엣지 212개`
+- Graph stats:
+  - Person 3
+  - Project 28
+  - Skill 93
+  - Achievement 32
+  - Role 13
+  - Organization 10
+  - Institution 8
+  - Event 8
+  - Category 8
+- `Technology` 노드: 0개
+- `Project -> Skill / USES_SKILL` 엣지: 45개
+- `Skill -> Project` 역방향 엣지: 0개
+- Category vault note: 생성 안 됨 (`Misc/Skills.md` 없음)
+- Vault files: 198개 (`vault/29347d1e`)
+- 프로젝트별 로그:
+  - `logs/projects/29347d1e/projectos.log`
+  - `logs/projects/29347d1e/tasks.log`
+  - 중단된 이전 실행 로그는 `logs/projects/29347d1e/archive/`로 이동
+
+### 검증
+
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result at that point: `129 passed, 24 warnings`
+- Frontend production build:
+  - `cd src/frontend && npm run build`
+  - Result: success
+  - Warning remains: Vite large chunk over 500 kB
+
+### 알려진 잔여 이슈
+
+- 이 섹션의 잔여 이슈 중 `Phil`, `HAS_ROLE`, `APPLIED_TO`, 주요 Skill/Role noise 일부는 다음 세션에서 해결됨.
+- `INTERESTED_IN`, `CONTAINS`, `IDENTICAL`은 아직 정책상 버림.
 
 ## Completed In This Session (2026-05-27 User Name Context Injection)
 

@@ -9,12 +9,12 @@ logger = get_logger(__name__)
 class OntologyAgent:
     FIXED_ENTITY_TYPES = [
         "Person", "Project", "Skill", "Organization", "Publication",
-        "Technology", "Role", "Achievement", "Event", "Institution",
+        "Role", "Achievement", "Event", "Institution",
     ]
     FIXED_EDGE_TYPES = [
         "WORKED_AT", "DEVELOPED", "USES_SKILL", "AUTHORED",
         "COLLABORATED_WITH", "ACHIEVED", "PARTICIPATED_IN",
-        "PUBLISHED_AT", "MENTORED_BY", "LED_BY",
+        "PUBLISHED_AT", "MENTORED_BY", "LED_BY", "HAS_ROLE",
     ]
 
     def __init__(self):
@@ -43,7 +43,8 @@ Entity type rules:
 - Return exactly the entity types and relation types listed above — no additions, no substitutions.
 - Do not introduce Topic, Concept, Keyword, Location, or any other unlisted types.
 - If an item looks like an important keyword, classify it using the most specific existing type.
-- Examples: Python, Vue, NetworkX -> Skill or Technology; ProjectOS -> Project; papers/documents -> Publication; awards, metrics, or concrete outcomes -> Achievement.
+- Skill includes programming languages, frameworks, methods, tools, technical keywords, and platform/model names. Do not create a separate Technology type.
+- Examples: Python, Vue, NetworkX, LLM, GPT, Gemini -> Skill; ProjectOS -> Project; papers/documents -> Publication; awards, metrics, or concrete outcomes -> Achievement.
 - Entities shown in the UI should be meaningful career/project objects, not chunks, vague topics, sentence fragments, or generic nouns.
 - Entity type names and relation type names must be English.
 - Extracted entity names may preserve the source language and can be Korean, English, or mixed Korean/English.

@@ -15,11 +15,16 @@ def test_get_user_returns_404_when_not_set(client):
 
 
 def test_post_user_saves_config(client):
-    r = client.post("/api/user", json={"name": "양필성", "display_name": "Pilseong Yang"})
+    r = client.post("/api/user", json={
+        "name": "양필성",
+        "display_name": "Pilseong Yang",
+        "aliases": ["Phil", ""],
+    })
     assert r.status_code == 200
     data = r.json()
     assert data["name"] == "양필성"
     assert data["display_name"] == "Pilseong Yang"
+    assert data["aliases"] == ["Phil"]
 
 
 def test_get_user_returns_saved_config(client):
@@ -32,6 +37,7 @@ def test_get_user_returns_saved_config(client):
 def test_post_user_display_name_defaults_to_name(client):
     r = client.post("/api/user", json={"name": "양필성"})
     assert r.json()["display_name"] == "양필성"
+    assert r.json()["aliases"] == []
 
 
 def test_get_user_returns_500_on_corrupted_config(client, tmp_path, monkeypatch):

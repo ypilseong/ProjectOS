@@ -7,11 +7,16 @@ import networkx as nx
 
 from app.config import config
 from app.models.graph import GraphStats, Ontology, TextChunk
-from app.utils.entity_validation import is_valid_entity
+from app.utils.entity_validation import is_valid_entity, normalize_entity_type
 from app.utils.llm_client import LLMClient
 from app.utils.logger import get_logger
+from app.utils.user_config import get_user_name_values, get_user_name_variants, load_user_config
 
 logger = get_logger(__name__)
+
+RELATION_TYPE_ALIASES = {
+    "LEAD_BY": "LED_BY",
+}
 
 
 class GraphBuilderAgent:
@@ -22,12 +27,8 @@ class GraphBuilderAgent:
 
     @staticmethod
     def _load_user_context() -> str:
-        """Build a prompt snippet from user.json (name + display_name)."""
-        try:
-            data = json.loads(Path(config.USER_CONFIG_PATH).read_text(encoding="utf-8"))
-        except Exception:
-            return ""
-        names = [v.strip() for k in ("name", "display_name") if (v := data.get(k, ""))]
+        """Build a prompt snippet from user.json names and aliases."""
+        names = get_user_name_values(load_user_config())
         if not names:
             return ""
         names_str = " / ".join(names)
@@ -37,6 +38,57 @@ class GraphBuilderAgent:
             "(e.g. bullet-list entries in a CV or resume), "
             f"treat {names_str} as the implicit subject and extract relations accordingly."
         )
+
+    @staticmethod
+    def _load_user_name_variants() -> tuple[str, set[str]]:
+        data = load_user_config()
+        canonical = (data.get("name") or data.get("display_name") or "").strip()
+        variants = set(get_user_name_variants(data))
+        return canonical, variants
+
+    def _normalize_entity_name(self, entity_type: str, name: str) -> str:
+        cleaned = " ".join((name or "").split()).strip()
+        if entity_type != "Person":
+            return cleaned
+
+        canonical, variants = self._load_user_name_variants()
+        if not canonical or not variants:
+            return cleaned
+
+        lowered = cleaned.lower()
+        if lowered in variants:
+            return canonical
+
+        parts = [part.strip().lower() for part in cleaned.replace("\\", "/").split("/")]
+        if any(part in variants for part in parts):
+            return canonical
+
+        if all(variant in lowered for variant in variants):
+            return canonical
+
+        return cleaned
+
+    @staticmethod
+    def _normalize_relation_type(relation: str) -> str:
+        cleaned = (relation or "").strip().upper()
+        return RELATION_TYPE_ALIASES.get(cleaned, cleaned)
+
+    def _normalize_relation(
+        self,
+        relation: str,
+        src_type: str,
+        src_name: str,
+        tgt_type: str,
+        tgt_name: str,
+    ) -> tuple[str, str, str, str, str]:
+        normalized = self._normalize_relation_type(relation)
+        if normalized == "USED_IN" and src_type == "Skill" and tgt_type == "Project":
+            return "USES_SKILL", tgt_type, tgt_name, src_type, src_name
+        if normalized == "APPLIED_TO" and src_type == "Skill" and tgt_type == "Project":
+            return "USES_SKILL", tgt_type, tgt_name, src_type, src_name
+        if normalized == "APPLIED_TO" and src_type == "Project" and tgt_type == "Skill":
+            return "USES_SKILL", src_type, src_name, tgt_type, tgt_name
+        return normalized, src_type, src_name, tgt_type, tgt_name
 
     async def run(
         self,
@@ -55,7 +107,11 @@ class GraphBuilderAgent:
             graph = nx.node_link_graph(data)
             logger.info(f"Loaded existing graph: {graph.number_of_nodes()} nodes")
 
-        entity_types = [e.name for e in ontology.entity_types]
+        entity_types = []
+        for entity in ontology.entity_types:
+            normalized = normalize_entity_type(entity.name)
+            if normalized not in entity_types:
+                entity_types.append(normalized)
         edge_types = [e.name for e in ontology.edge_types]
 
         total = len(chunks)
@@ -83,11 +139,16 @@ Allowed relation types: {', '.join(edge_types)}
 
 Extraction rules:
 - Do not create entities for chunks, pages, sections, or raw text snippets.
-- Extract important skills, technologies, tools, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
+- Extract important skills, tools, methods, model names, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
 - Do not create Keyword or Concept entities. If a term looks like an important keyword, classify it using the most specific allowed type.
-- Examples: "LLM", "NetworkX", "Vue", "D3.js" -> Skill or Technology.
+- Do not create Technology entities. Technical terms, tools, model names, platforms, frameworks, libraries, and methods must be Skill.
+- Examples: "LLM", "GPT", "Gemini", "NetworkX", "Vue", "D3.js" -> Skill.
 - Examples: "ProjectOS", "MiroFish" -> Project.
 - Examples: "그래프 시각화 기능 구현", "30% performance improvement" -> Achievement when the outcome is concrete.
+- Tool/model names alone are not Projects. Classify them as Skill unless the text names a concrete project, product, paper, or system.
+- When a project uses a skill/tool/method/model, extract a Project -> Skill relation using USES_SKILL. Examples: "ProjectOS used Vue and NetworkX" -> ProjectOS USES_SKILL Vue, ProjectOS USES_SKILL NetworkX.
+- Use HAS_ROLE only for Person -> Role when the role is a formal title or academic position.
+- When a person built, led, participated in, or achieved something through a project, also connect the Person to the Project and the Project to its Skills. Do not leave key skills connected only to the Person if a project context is present.
 - Avoid vague generic nouns, broad topics, isolated sentence fragments, and duplicate entities.
 - Use Person only for real, identifiable human names explicitly present in the text.
 - Do not create Person entities for pronouns, the author/user, anonymous people, role titles, departments, fields, or generic descriptions such as "I", "me", "저", "나", "author", "user", "student", "panelists", or "researcher".
@@ -117,8 +178,8 @@ Return only valid JSON in this exact shape:
         node_map: dict[str, str] = {}
 
         for entity in result.get("entities", []):
-            etype = entity.get("type", "").strip()
-            name = entity.get("name", "").strip()
+            etype = normalize_entity_type(entity.get("type", ""))
+            name = self._normalize_entity_name(etype, entity.get("name", ""))
             if not is_valid_entity(etype, name):
                 logger.info(f"Skipping invalid entity: {etype}:{name}")
                 continue
@@ -142,9 +203,13 @@ Return only valid JSON in this exact shape:
             node_map[name] = node_id
 
         for rel in result.get("relations", []):
-            src_name = rel.get("source", "")
-            tgt_name = rel.get("target", "")
-            relation = rel.get("relation", "")
+            src_type = normalize_entity_type(rel.get("source_type", ""))
+            tgt_type = normalize_entity_type(rel.get("target_type", ""))
+            src_name = self._normalize_entity_name(src_type, rel.get("source", ""))
+            tgt_name = self._normalize_entity_name(tgt_type, rel.get("target", ""))
+            relation, src_type, src_name, tgt_type, tgt_name = self._normalize_relation(
+                rel.get("relation", ""), src_type, src_name, tgt_type, tgt_name
+            )
             if not src_name or not tgt_name or not relation:
                 continue
             if allowed_edge_set and relation not in allowed_edge_set:
@@ -215,16 +280,20 @@ Return only valid JSON in this exact shape:
         """Add edges between existing nodes only — never creates new nodes."""
         node_map: dict[str, str] = {}
         for entity in result.get("entities", []):
-            etype = entity.get("type", "").strip()
-            name = entity.get("name", "").strip()
+            etype = normalize_entity_type(entity.get("type", ""))
+            name = self._normalize_entity_name(etype, entity.get("name", ""))
             existing = self._find_existing_node(graph, etype, name)
             if existing:
                 node_map[name] = existing
 
         for rel in result.get("relations", []):
-            src_name = rel.get("source", "")
-            tgt_name = rel.get("target", "")
-            relation = rel.get("relation", "")
+            src_type = normalize_entity_type(rel.get("source_type", ""))
+            tgt_type = normalize_entity_type(rel.get("target_type", ""))
+            src_name = self._normalize_entity_name(src_type, rel.get("source", ""))
+            tgt_name = self._normalize_entity_name(tgt_type, rel.get("target", ""))
+            relation, src_type, src_name, tgt_type, tgt_name = self._normalize_relation(
+                rel.get("relation", ""), src_type, src_name, tgt_type, tgt_name
+            )
             if not src_name or not tgt_name or not relation:
                 continue
             if allowed_edge_set and relation not in allowed_edge_set:

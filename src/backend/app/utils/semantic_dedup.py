@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -7,6 +6,7 @@ import networkx as nx
 from app.config import config
 from app.utils.embedding_client import EmbeddingClient
 from app.utils.logger import get_logger
+from app.utils.user_config import get_user_name_variants, load_user_config
 
 logger = get_logger(__name__)
 
@@ -114,17 +114,11 @@ def merge_user_persons(graph: nx.DiGraph) -> tuple[nx.DiGraph, int]:
     if not user_config_path.exists():
         return graph, 0
 
-    try:
-        user_data = json.loads(user_config_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"merge_user_persons: failed to read user.json: {e}")
+    user_data = load_user_config()
+    if not user_data:
         return graph, 0
 
-    name_variants: dict[str, str] = {}  # lowercased → original
-    for key in ("name", "display_name"):
-        val = (user_data.get(key) or "").strip()
-        if val:
-            name_variants[val.lower()] = val
+    name_variants = get_user_name_variants(user_data)
 
     if len(name_variants) < 2:
         return graph, 0
@@ -139,12 +133,14 @@ def merge_user_persons(graph: nx.DiGraph) -> tuple[nx.DiGraph, int]:
     if len(matched) < 2:
         return graph, 0
 
+    primary_name = (user_data.get("name") or "").strip()
     display_name = (user_data.get("display_name") or "").strip()
     canonical_id = max(
         matched,
         key=lambda nid: (
-            graph.degree(nid),
+            1 if graph.nodes[nid].get("name") == primary_name else 0,
             1 if graph.nodes[nid].get("name") == display_name else 0,
+            graph.degree(nid),
         ),
     )
 

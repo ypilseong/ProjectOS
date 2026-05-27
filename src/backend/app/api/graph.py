@@ -52,6 +52,12 @@ async def get_global_graph():
             projects_meta.append({"id": project_id, "name": project_name, "color": color})
 
             data = json.loads(graph_path.read_text(encoding="utf-8"))
+            if "links" in data and "edges" not in data:
+                data["edges"] = data.pop("links")
+            graph = nx.node_link_graph(data)
+            from app.utils.graph_normalization import normalize_graph_entity_types
+            graph, _ = normalize_graph_entity_types(graph)
+            data = nx.node_link_data(graph)
             nodes = data.get("nodes", [])
             links = data.get("links") or data.get("edges", [])
 
@@ -98,7 +104,15 @@ async def get_ontology(project_id: str):
     p = Path(config.PROJECTS_DIR) / project_id / "ontology.json"
     if not p.exists():
         raise HTTPException(404, "Ontology not built yet")
-    return json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    from app.models.graph import Ontology, EntityTypeDef, EdgeTypeDef
+    from app.utils.graph_normalization import normalize_ontology_types
+    ontology = Ontology(
+        entity_types=[EntityTypeDef(**e) for e in data["entity_types"]],
+        edge_types=[EdgeTypeDef(**e) for e in data["edge_types"]],
+        analysis_summary=data["analysis_summary"],
+    )
+    return dataclasses.asdict(normalize_ontology_types(ontology))
 
 
 @router.post("/{project_id}/graph")
@@ -130,7 +144,16 @@ async def get_graph(project_id: str):
     p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
     if not p.exists():
         raise HTTPException(404, "Graph not built yet")
-    return json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+    from app.utils.graph_normalization import normalize_graph_entity_types
+    graph, _ = normalize_graph_entity_types(graph)
+    normalized = nx.node_link_data(graph)
+    if "edges" in normalized and "links" not in normalized:
+        normalized["links"] = normalized.pop("edges")
+    return normalized
 
 
 @router.get("/{project_id}/graph/stats")
@@ -143,12 +166,16 @@ async def get_graph_stats(project_id: str):
     if "links" in data and "edges" not in data:
         data["edges"] = data.pop("links")
     graph = nx.node_link_graph(data)
+    from app.utils.graph_normalization import normalize_graph_entity_types
+    graph, _ = normalize_graph_entity_types(graph)
     agent = GraphBuilderAgent()
     stats = agent.get_stats(graph)
     return dataclasses.asdict(stats)
 
 
 async def _run_ontology(task_id: str, project_id: str):
+    from app.utils.logger import reset_log_project, set_log_project
+    log_token = set_log_project(project_id)
     try:
         from app.agents.ontology_agent import OntologyAgent
         from app.models.graph import TextChunk
@@ -179,9 +206,13 @@ async def _run_ontology(task_id: str, project_id: str):
             project.status = ProjectStatus.FAILED
             project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)
 
 
 async def _run_graph(task_id: str, project_id: str, incremental: bool):
+    from app.utils.logger import reset_log_project, set_log_project
+    log_token = set_log_project(project_id)
     try:
         from app.agents.graph_builder_agent import GraphBuilderAgent
         from app.agents.obsidian_writer_agent import ObsidianWriterAgent
@@ -197,6 +228,21 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             edge_types=[EdgeTypeDef(**e) for e in ont_data["edge_types"]],
             analysis_summary=ont_data["analysis_summary"],
         )
+        from app.utils.graph_normalization import normalize_graph_entity_types, normalize_ontology_types
+        ontology = normalize_ontology_types(ontology)
+        from app.agents.ontology_agent import OntologyAgent
+        existing_edges = {edge.name for edge in ontology.edge_types}
+        for edge_name in OntologyAgent.FIXED_EDGE_TYPES:
+            if edge_name not in existing_edges:
+                ontology.edge_types.append(
+                    EdgeTypeDef(
+                        name=edge_name,
+                        description="fixed relation type",
+                        source_types=[],
+                        target_types=[],
+                    )
+                )
+                existing_edges.add(edge_name)
         graph_path = str(proj_dir / "graph.json")
         graph_agent = GraphBuilderAgent()
         total_chunks = len(chunks)
@@ -224,6 +270,9 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
 
         task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)
         from app.utils.semantic_dedup import merge_user_persons, semantic_dedup
+        graph, normalized_count = normalize_graph_entity_types(graph)
+        if normalized_count:
+            logger.info(f"Entity type normalization: {normalized_count} node(s)")
         graph, user_merged = merge_user_persons(graph)
         if user_merged:
             logger.info(f"User person merge: {user_merged} node(s)")
@@ -261,9 +310,12 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         graph_agent.save(graph, graph_path)
 
         total_nodes = graph.number_of_nodes()
+        writable_nodes = sum(
+            1 for _, data in graph.nodes(data=True) if data.get("type") != "Category"
+        )
         task_manager.update(
             task_id,
-            message=f"Obsidian vault 작성 중... (0/{total_nodes})",
+            message=f"Obsidian vault 작성 중... (0/{writable_nodes})",
             progress=72,
         )
         writer = ObsidianWriterAgent()
@@ -301,3 +353,5 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             project.status = ProjectStatus.FAILED
             project_store.save(project)
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)

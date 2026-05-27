@@ -89,6 +89,20 @@ def test_user_person_stays_as_center(tmp_path, monkeypatch):
     assert "Person:양필성" in g
 
 
+def test_alias_person_stays_as_center(tmp_path, monkeypatch):
+    user_json = tmp_path / "user.json"
+    user_json.write_text('{"name": "양필성", "display_name": "Pilseong Yang", "aliases": ["Phil"]}')
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    g = nx.DiGraph()
+    g.add_node("Person:Phil", type="Person", name="Phil", source_files=[])
+    g.add_node("Skill:NLP", type="Skill", name="NLP", source_files=[])
+    g.add_edge("Person:Phil", "Skill:NLP", relation="USES_SKILL")
+    g, _ = add_category_hubs(g)
+
+    assert g.has_edge("Person:Phil", "Category:Skills")
+
+
 def test_idempotent_hub_creation(tmp_path, monkeypatch):
     user_json = tmp_path / "user.json"
     user_json.write_text('{"name": "양필성", "display_name": "Pilseong Yang"}')

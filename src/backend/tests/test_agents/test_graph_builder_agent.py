@@ -88,6 +88,41 @@ async def test_graph_builder_filters_generic_person_entities(sample_ontology):
     assert "Skill:Python" in graph.nodes
 
 
+@pytest.mark.asyncio
+async def test_graph_builder_normalizes_combined_user_person_name(tmp_path, monkeypatch, sample_ontology):
+    import json
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    user_json = tmp_path / "user.json"
+    user_json.write_text(json.dumps({"name": "양필성", "display_name": "Pilseong Yang"}))
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "양필성 / Pilseong Yang은 Python을 사용합니다", "cv.pdf", "cv", 1, 0)]
+    extract = {
+        "entities": [
+            {"type": "Person", "name": "양필성 / Pilseong Yang", "description": "document owner"},
+            {"type": "Skill", "name": "Python", "description": "programming"},
+        ],
+        "relations": [
+            {
+                "source": "양필성 / Pilseong Yang",
+                "source_type": "Person",
+                "target": "Python",
+                "target_type": "Skill",
+                "relation": "USES_SKILL",
+            }
+        ],
+    }
+
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=extract)):
+        graph = await agent.run(chunks, sample_ontology)
+
+    assert "Person:양필성" in graph.nodes
+    assert "Person:양필성 / Pilseong Yang" not in graph.nodes
+    assert graph.has_edge("Person:양필성", "Skill:Python")
+
+
 def test_user_context_includes_both_names(tmp_path, monkeypatch):
     import json
     from app.agents.graph_builder_agent import GraphBuilderAgent
@@ -100,6 +135,22 @@ def test_user_context_includes_both_names(tmp_path, monkeypatch):
     assert "양필성" in agent._user_context
     assert "Pilseong Yang" in agent._user_context
     assert "implicit subject" in agent._user_context
+
+
+def test_user_context_includes_aliases(tmp_path, monkeypatch):
+    import json
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    user_json = tmp_path / "user.json"
+    user_json.write_text(json.dumps({
+        "name": "양필성",
+        "display_name": "Pilseong Yang",
+        "aliases": ["Phil"],
+    }))
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    agent = GraphBuilderAgent()
+    assert "Phil" in agent._user_context
 
 
 def test_user_context_empty_when_no_user_json(tmp_path, monkeypatch):
@@ -146,6 +197,45 @@ def test_fuzzy_match_finds_similar():
     # Exact match (different case)
     existing = agent._find_existing_node(g, "Person", "yang pilseong")
     assert existing == "Person:Yang Pilseong"
+
+
+def test_relation_type_aliases_common_llm_typo():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    assert GraphBuilderAgent._normalize_relation_type("LEAD_BY") == "LED_BY"
+    assert GraphBuilderAgent._normalize_relation_type(None) == ""
+
+
+def test_used_in_relation_is_reversed_to_project_uses_skill():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    relation, src_type, src_name, tgt_type, tgt_name = agent._normalize_relation(
+        "USED_IN", "Skill", "NLP", "Project", "Speaker Identification"
+    )
+
+    assert relation == "USES_SKILL"
+    assert (src_type, src_name) == ("Project", "Speaker Identification")
+    assert (tgt_type, tgt_name) == ("Skill", "NLP")
+
+
+def test_applied_to_relation_is_normalized_to_project_uses_skill():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    relation, src_type, src_name, tgt_type, tgt_name = agent._normalize_relation(
+        "APPLIED_TO", "Skill", "NLP", "Project", "Speaker Identification"
+    )
+
+    assert relation == "USES_SKILL"
+    assert (src_type, src_name) == ("Project", "Speaker Identification")
+    assert (tgt_type, tgt_name) == ("Skill", "NLP")
+
+
+def test_has_role_relation_is_preserved():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    assert GraphBuilderAgent._normalize_relation_type("HAS_ROLE") == "HAS_ROLE"
 
 
 def test_fuzzy_match_no_match():

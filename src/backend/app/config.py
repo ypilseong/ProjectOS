@@ -6,6 +6,7 @@ class Config(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o"
+    LLM_REQUEST_TIMEOUT: float = 120.0
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
     FUZZY_MATCH_THRESHOLD: float = 0.85

@@ -1,5 +1,8 @@
+import asyncio
 import json
+
 from openai import AsyncOpenAI
+
 from app.config import config
 
 
@@ -13,10 +16,14 @@ class LLMClient:
         )
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        resp = await self._client.chat.completions.create(
-            model=config.LLM_MODEL,
-            messages=messages,
-            **kwargs,
+        request_timeout = kwargs.pop("request_timeout", config.LLM_REQUEST_TIMEOUT)
+        resp = await asyncio.wait_for(
+            self._client.chat.completions.create(
+                model=config.LLM_MODEL,
+                messages=messages,
+                **kwargs,
+            ),
+            timeout=request_timeout,
         )
         return resp.choices[0].message.content
 

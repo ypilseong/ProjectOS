@@ -30,11 +30,11 @@ async for token in llm_client.stream(prompt):
 
 ## 고정 타입 목록
 
-엔티티 10개: Person, Project, Skill, Organization, Publication, Technology, Role, Achievement, Event, Institution
+엔티티 9개: Person, Project, Skill, Organization, Publication, Role, Achievement, Event, Institution
 
 관계 10개: WORKED_AT, DEVELOPED, USES_SKILL, AUTHORED, COLLABORATED_WITH, ACHIEVED, PARTICIPATED_IN, PUBLISHED_AT, MENTORED_BY, LED_BY
 
-Keyword/Concept 같은 추상 타입은 추가하지 말 것. 핵심 키워드처럼 보이는 항목은 Skill, Technology, Project, Achievement 등 가장 구체적인 기존 타입으로 분류.
+Keyword/Concept/Technology 같은 중복 또는 추상 타입은 추가하지 말 것. 기술 키워드, 도구, 프레임워크, 모델명은 Skill로 분류하고, 나머지 핵심 항목은 Project, Achievement 등 가장 구체적인 기존 타입으로 분류.
 
 ## Fuzzy Matching
 

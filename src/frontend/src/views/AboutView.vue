@@ -183,7 +183,7 @@ const steps = [
   {
     num: '2', title: '온톨로지 생성',
     desc: 'LLM이 문서에서 엔티티와 관계 타입을 추출합니다.',
-    detail: 'Person, Project, Skill 등 10가지 고정 엔티티 타입과 WORKED_AT, DEVELOPED 등 10가지 관계 타입을 확인할 수 있습니다. 핵심 키워드성 항목은 중복 타입 없이 Skill, Technology, Project, Achievement 등 가장 구체적인 기존 타입으로 분류합니다.',
+    detail: 'Person, Project, Skill 등 9가지 고정 엔티티 타입과 WORKED_AT, DEVELOPED 등 10가지 관계 타입을 확인할 수 있습니다. 기술 키워드, 도구, 프레임워크, 모델명은 Skill로 통합하고, 나머지 핵심 항목은 Project, Achievement 등 가장 구체적인 기존 타입으로 분류합니다.',
   },
   {
     num: '3', title: '그래프 구축',
