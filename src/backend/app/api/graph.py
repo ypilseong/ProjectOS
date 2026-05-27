@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 
@@ -243,6 +244,32 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
                     )
                 )
                 existing_edges.add(edge_name)
+
+        # --- Hash tracking ---
+        from app.services.document_hash_store import DocumentHashStore
+        proj_files_dir = proj_dir / "files"
+        hash_store = DocumentHashStore(proj_dir)
+
+        source_files = list({c.source_file for c in chunks})
+        for fname in source_files:
+            fpath = proj_files_dir / fname
+            if fpath.exists():
+                digest = hashlib.md5(fpath.read_bytes()).hexdigest()
+                hash_store.update(fname, digest)
+
+        ont_hash = hashlib.md5(json.dumps(ont_data, sort_keys=True).encode()).hexdigest()
+        hash_store.update_ontology(ont_hash)
+
+        if incremental:
+            changed_files = set(hash_store.get_changed_files(source_files))
+            original_count = len(chunks)
+            chunks = [c for c in chunks if c.source_file in changed_files]
+            skipped = original_count - len(chunks)
+            if skipped:
+                logger.info(f"Incremental: skipping {skipped} chunks from {len(source_files) - len(changed_files)} unchanged files")
+                task_manager.update(task_id, message=f"증분 처리: {skipped}청크 스킵, {len(chunks)}청크 재처리", progress=25)
+        # --- End hash tracking ---
+
         graph_path = str(proj_dir / "graph.json")
         graph_agent = GraphBuilderAgent()
         total_chunks = len(chunks)
@@ -308,6 +335,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             logger.info(f"Category hubs added: {hubs_added}")
 
         graph_agent.save(graph, graph_path)
+        hash_store.save()
 
         total_nodes = graph.number_of_nodes()
         writable_nodes = sum(
