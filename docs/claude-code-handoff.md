@@ -1,10 +1,106 @@
 # Claude Code Handoff
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 ## Current Objective
 
-모든 계획된 리팩토링 완료. 다음 세션에서는 새 기능 개발 또는 버그 수정 진행.
+user.json 기반 Person 노드 병합 완료. 다음 작업 후보:
+1. 추출 프롬프트에 사용자 이름 컨텍스트 주입 (LLM이 처음부터 동일 인물로 추출하도록)
+2. 사용자 중심 그래프 시각화 (카테고리 허브 노드)
+3. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
+4. Project 한/영 중복 병합 (같은 프로젝트가 5~7개 노드로 분리되는 문제)
+
+## Completed In This Session (2026-05-27 User Person Merge)
+
+### 변경 내역
+
+- `app/utils/semantic_dedup.py`: `merge_user_persons()` 함수 추가
+  - `USER_CONFIG_PATH`(user.json)에서 `name` + `display_name` 두 변형 로드
+  - 그래프의 Person 노드 중 이름이 변형에 매칭되는 노드를 모두 단일 canonical 노드로 병합
+  - canonical 선택 기준: degree 높은 쪽, 동점 시 display_name 매칭 우선
+  - user.json 없거나 변형이 1개뿐이면 무조건 스킵
+- `app/api/graph.py` `_run_graph()`: `semantic_dedup()` 호출 직전에 `merge_user_persons()` 추가 (progress 71%)
+- `tests/test_utils/test_semantic_dedup.py`: 4개 테스트 추가
+  - `test_merge_user_persons_merges_name_and_display_name` — 병합 + 엣지 리다이렉트
+  - `test_merge_user_persons_skips_when_no_user_json` — user.json 없으면 스킵
+  - `test_merge_user_persons_skips_when_only_one_variant` — 변형 1개면 스킵
+  - `test_merge_user_persons_does_not_touch_other_persons` — 다른 Person 노드 영향 없음
+- `CLAUDE.md` Key Rules: 작업 완료 후 handoff 문서 업데이트 규칙 추가
+
+### 임베딩 URL 버그 수정
+
+- `.env` 및 `.env.example`: `EMBEDDING_BASE_URL=http://localhost:14004` → `http://localhost:14004/v1`
+  - OpenAI SDK가 `{base_url}/embeddings`를 호출하는데 Infinity 서버 경로가 `/v1/embeddings`여서 404 발생하던 문제
+  - 수정 후 semantic dedup 정상 동작 확인 (5개 노드 병합: LLM 개발, Project 2개, Role 1개)
+
+### 검증
+
+- `python3 -m pytest tests/ -v` → **96 passed**
+- 그래프 재빌드 결과: 노드 187개, 엣지 98개
+  - Person: `Pilseong Yang` → `양필성` 병합 확인
+  - Semantic dedup: `LLM development`←`LLM 개발`, `Team Leader`←`팀 리더` 등 5개 병합
+
+### Claude API 대체 가능성 확인
+
+현재 `LLMClient`는 `openai.AsyncOpenAI`에 `base_url`만 바꿔서 사용하므로, Anthropic OpenAI 호환 엔드포인트로 env 3개만 교체하면 Claude로 전환 가능:
+```
+LLM_BASE_URL=https://api.anthropic.com/v1
+LLM_API_KEY=<anthropic_api_key>
+LLM_MODEL=claude-sonnet-4-6
+```
+단, `response_format={"type": "json_object"}` (chat_json에서 사용) 호환 여부 실사용 테스트 필요.
+
+## Completed In This Session (2026-05-26 Semantic Dedup + Embedding Serving)
+
+### Embedding Model Serving (`../embedding-model-serving/`)
+
+- 신규 프로젝트 `/raid/home/a202121010/workspace/projects/embedding-model-serving/` 생성
+- `docker-compose.yml`: Infinity 서버 (`michaelf34/infinity:latest`), BGE-M3 로컬 경로 마운트
+  - GPU 4 (`CUDA_DEVICE=4`), 포트 14004 (`HOST_PORT=14004`)
+  - 볼륨: `${MODELS_DIR}:/models`
+  - 커맨드: `v2 --model-id /models/BAAI/bge-m3 --dtype float16 --batch-size 32 --port 7997 --engine torch --url-prefix /v1`
+- BGE-M3 모델 다운로드: `/raid/home/a202121010/workspace/models/BAAI/bge-m3/`
+- 컨테이너 `embedding-bge-m3` 실행 중. 확인:
+  - `curl http://localhost:14004/v1/models` → `BAAI/bge-m3` 반환
+  - `curl http://localhost:14004/v1/embeddings` → 한국어/영어 임베딩 정상
+- `.env`: `MODELS_DIR=/raid/home/a202121010/workspace/models`
+
+### Semantic Deduplication (ProjectOS Backend)
+
+- `app/config.py`: `EMBEDDING_BASE_URL=""`, `EMBEDDING_MODEL="BAAI/bge-m3"`, `SEMANTIC_DEDUP_THRESHOLD=0.88` 추가
+- `.env`: `EMBEDDING_BASE_URL=http://localhost:14004`, `EMBEDDING_MODEL=BAAI/bge-m3`, `SEMANTIC_DEDUP_THRESHOLD=0.88` 추가
+- `.env.example`: 임베딩 설정 섹션 추가
+- `app/utils/embedding_client.py` (신규): OpenAI SDK 기반 `/v1/embeddings` 클라이언트
+- `app/utils/semantic_dedup.py` (신규):
+  - 같은 타입 노드 이름을 BGE-M3로 임베딩 → 코사인 유사도 ≥ threshold 쌍을 Union-Find로 그룹화
+  - Person 타입 제외 (사람은 자동 병합 안 함)
+  - Canonical 선택 기준: 연결도 높은 노드, 동점 시 이름 짧은 쪽
+  - `EMBEDDING_BASE_URL` 미설정 시 완전 스킵
+  - `_merge_node()`: 엣지 리다이렉트 + source_files 합집합 + 중복 노드 제거
+- `app/api/graph.py` `_run_graph()`: 그래프 저장 전 `semantic_dedup()` 호출 (progress 71%)
+- `pyproject.toml`: `numpy>=1.26` 의존성 추가 (numpy 2.4.6 설치됨)
+- `tests/test_utils/test_semantic_dedup.py` (신규): 7개 테스트
+  - `test_merge_node_redirects_edges` — 엣지 리다이렉트 확인
+  - `test_merge_node_does_not_duplicate_existing_edge` — 중복 엣지 방지
+  - `test_dedup_merges_similar_same_type_nodes` — NLP/자연어처리 병합
+  - `test_dedup_skips_person_nodes` — Person 타입 스킵
+  - `test_dedup_skips_when_no_embedding_url` — URL 미설정 시 스킵
+  - `test_dedup_does_not_merge_different_types` — 타입 다르면 병합 안 함
+  - `test_dedup_transitive_merge` — A≈B, B≈C → 3개 → 1개
+
+### 검증
+
+- `python3 -m pytest tests/ -v` → **92 passed**
+- 백엔드 포트 8001 재시작 완료
+
+## Completed In This Session (2026-05-26 Graph Visualization Fix)
+
+- `src/views/ProjectDetail.vue` `onMounted()`: 페이지 새로고침/직접 접속 시 그래프가 표시 안 되는 버그 수정
+  - 기존: status만 읽고 graphData 미로드, activeStep = 0 유지
+  - 수정: status 별 분기
+    - `ready` → `getGraph()` + `getOntology()` 병렬 로드 → `activeStep = 3`
+    - `building` → `activeStep = 2` + SSE 재연결
+    - `parsed` / `ontology` → `activeStep = 1`
 
 ## Completed In This Session (2026-05-26 User Config + Profile Refactor)
 

@@ -14,6 +14,9 @@ class Config(BaseSettings):
     VAULT_DIR: str = "./vault"
     LOG_DIR: str = "../../logs"
     USER_CONFIG_PATH: str = "./user.json"
+    EMBEDDING_BASE_URL: str = ""
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    SEMANTIC_DEDUP_THRESHOLD: float = 0.88
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

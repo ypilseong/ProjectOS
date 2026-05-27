@@ -16,6 +16,8 @@ src/backend/projects/**/*.json
 src/backend/vault/**/*.md
 src/backend/vault/**/*.canvas
 src/backend/vault/**/*.json
+vault/
+logs/
 **/.stfolder
 **/.stignore
 

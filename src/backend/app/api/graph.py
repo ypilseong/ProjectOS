@@ -221,6 +221,16 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             graph_path=graph_path,
             progress_callback=on_chunk_progress,
         )
+
+        task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)
+        from app.utils.semantic_dedup import merge_user_persons, semantic_dedup
+        graph, user_merged = merge_user_persons(graph)
+        if user_merged:
+            logger.info(f"User person merge: {user_merged} node(s)")
+        graph, merged_count = await semantic_dedup(graph)
+        if merged_count:
+            logger.info(f"Merged {merged_count} duplicate nodes")
+
         graph_agent.save(graph, graph_path)
 
         total_nodes = graph.number_of_nodes()

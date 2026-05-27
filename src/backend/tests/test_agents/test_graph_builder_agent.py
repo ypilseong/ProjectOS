@@ -65,6 +65,29 @@ async def test_graph_edge_has_relation(sample_ontology):
     assert edges[0][2]["confidence"] == 0.95
 
 
+@pytest.mark.asyncio
+async def test_graph_builder_filters_generic_person_entities(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "저는 Python을 사용합니다", "cv.pdf", "cv", 1, 0)]
+    extract = {
+        "entities": [
+            {"type": "Person", "name": "저", "description": "author"},
+            {"type": "Person", "name": "Author", "description": "author"},
+            {"type": "Skill", "name": "Python", "description": "programming"},
+        ],
+        "relations": [],
+    }
+
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=extract)):
+        graph = await agent.run(chunks, sample_ontology)
+
+    assert "Person:저" not in graph.nodes
+    assert "Person:Author" not in graph.nodes
+    assert "Skill:Python" in graph.nodes
+
+
 def test_fuzzy_match_finds_similar():
     from app.agents.graph_builder_agent import GraphBuilderAgent
     import networkx as nx

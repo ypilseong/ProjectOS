@@ -16,7 +16,9 @@
 ## LLM 호출 패턴
 
 ```python
-from app.utils.llm_client import llm_client
+from app.utils.llm_client import LLMClient
+
+llm_client = LLMClient()
 
 # JSON 응답
 result: dict = await llm_client.chat_json(prompt)
@@ -31,6 +33,8 @@ async for token in llm_client.stream(prompt):
 엔티티 10개: Person, Project, Skill, Organization, Publication, Technology, Role, Achievement, Event, Institution
 
 관계 10개: WORKED_AT, DEVELOPED, USES_SKILL, AUTHORED, COLLABORATED_WITH, ACHIEVED, PARTICIPATED_IN, PUBLISHED_AT, MENTORED_BY, LED_BY
+
+Keyword/Concept 같은 추상 타입은 추가하지 말 것. 핵심 키워드처럼 보이는 항목은 Skill, Technology, Project, Achievement 등 가장 구체적인 기존 타입으로 분류.
 
 ## Fuzzy Matching
 

@@ -34,26 +34,37 @@ class OntologyAgent:
     def _build_prompt(self, sample: str) -> str:
         fixed_entities = ", ".join(self.FIXED_ENTITY_TYPES)
         fixed_edges = ", ".join(self.FIXED_EDGE_TYPES)
-        return f"""다음 문서를 분석하여 커리어/프로젝트 지식 그래프를 위한 온톨로지를 정의하세요.
+        return f"""You are designing an ontology for a career/project knowledge graph.
 
-고정 엔티티 타입 (반드시 포함): {fixed_entities}
-고정 관계 타입 (반드시 포함): {fixed_edges}
+Allowed entity types (use ONLY these, do not add any others): {fixed_entities}
+Allowed relation types (use ONLY these, do not add any others): {fixed_edges}
 
-문서 내용:
+Entity type rules:
+- Return exactly the entity types and relation types listed above — no additions, no substitutions.
+- Do not introduce Topic, Concept, Keyword, Location, or any other unlisted types.
+- If an item looks like an important keyword, classify it using the most specific existing type.
+- Examples: Python, Vue, NetworkX -> Skill or Technology; ProjectOS -> Project; papers/documents -> Publication; awards, metrics, or concrete outcomes -> Achievement.
+- Entities shown in the UI should be meaningful career/project objects, not chunks, vague topics, sentence fragments, or generic nouns.
+- Entity type names and relation type names must be English.
+- Extracted entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
+
+Document:
 {sample}
 
-다음 JSON 형식으로 응답하세요:
+Return only valid JSON in this exact shape:
 {{
   "entity_types": [
-    {{"name": "Person", "description": "개인/사람 엔티티", "examples": ["양필성", "김철수"]}}
+    {{"name": "Person", "description": "individual people", "examples": ["양필성", "John Kim"]}}
   ],
   "edge_types": [
-    {{"name": "WORKED_AT", "description": "근무 관계", "source_types": ["Person"], "target_types": ["Organization"]}}
+    {{"name": "WORKED_AT", "description": "employment or affiliation relation", "source_types": ["Person"], "target_types": ["Organization"]}}
   ],
-  "analysis_summary": "문서 요약 및 도메인 특성 설명"
+  "analysis_summary": "summary of the document domain and ontology design"
 }}"""
 
     def _parse_result(self, result: dict) -> Ontology:
+        allowed_entity_set = set(self.FIXED_ENTITY_TYPES)
+        allowed_edge_set = set(self.FIXED_EDGE_TYPES)
         entity_types = [
             EntityTypeDef(
                 name=e["name"],
@@ -61,7 +72,10 @@ class OntologyAgent:
                 examples=e.get("examples", []),
             )
             for e in result.get("entity_types", [])
+            if e.get("name") in allowed_entity_set
         ]
+        if not entity_types:
+            entity_types = [EntityTypeDef(name=n, description="", examples=[]) for n in self.FIXED_ENTITY_TYPES]
         edge_types = [
             EdgeTypeDef(
                 name=e["name"],
@@ -70,7 +84,10 @@ class OntologyAgent:
                 target_types=e.get("target_types", []),
             )
             for e in result.get("edge_types", [])
+            if e.get("name") in allowed_edge_set
         ]
+        if not edge_types:
+            edge_types = [EdgeTypeDef(name=n, description="", source_types=[], target_types=[]) for n in self.FIXED_EDGE_TYPES]
         return Ontology(
             entity_types=entity_types,
             edge_types=edge_types,

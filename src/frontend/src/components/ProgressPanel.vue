@@ -88,6 +88,8 @@ function startStream(taskId) {
 
 function addLog(msg, type = 'info') {
   if (!msg) return
+  const last = logs.value[logs.value.length - 1]
+  if (last && last.msg === msg && last.type === type) return
   logs.value.push({ time: new Date().toLocaleTimeString(), msg, type })
   nextTick(() => {
     if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight

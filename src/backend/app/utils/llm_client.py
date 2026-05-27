@@ -6,8 +6,10 @@ from app.config import config
 class LLMClient:
     def __init__(self):
         self._client = AsyncOpenAI(
-            api_key=config.LLM_API_KEY,
+            api_key=config.LLM_API_KEY or "not-needed",
             base_url=config.LLM_BASE_URL,
+            timeout=180.0,
+            max_retries=1,
         )
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
@@ -37,6 +39,3 @@ class LLMClient:
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
-
-
-llm_client = LLMClient()

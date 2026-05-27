@@ -10,6 +10,14 @@
         >{{ t }}</el-checkbox-button>
       </el-checkbox-group>
       <el-button size="small" @click="resetZoom" class="reset-btn">Reset</el-button>
+      <div v-if="projectColors" class="project-legend">
+        <span
+          v-for="(color, pid) in projectColors"
+          :key="pid"
+          class="legend-item"
+          :style="{ background: color }"
+        >{{ projectNames?.[pid] || pid }}</span>
+      </div>
     </div>
     <svg ref="svgEl" class="graph-svg" />
     <el-drawer
@@ -54,6 +62,9 @@ import * as d3 from 'd3'
 
 const props = defineProps({
   graphData: { type: Object, default: null },
+  projectColors: { type: Object, default: null },
+  projectNames: { type: Object, default: null },
+  onProjectNodeClick: { type: Function, default: null },
 })
 
 const svgEl = ref(null)
@@ -77,8 +88,14 @@ const NODE_COLORS = {
   default: '#95A5A6',
 }
 
-function getColor(type) {
-  return NODE_COLORS[type] || NODE_COLORS.default
+function getColor(typeOrNode) {
+  if (typeof typeOrNode === 'object' && typeOrNode !== null) {
+    if (props.projectColors && typeOrNode.project_id) {
+      return props.projectColors[typeOrNode.project_id] || NODE_COLORS.default
+    }
+    return NODE_COLORS[typeOrNode.type] || NODE_COLORS.default
+  }
+  return NODE_COLORS[typeOrNode] || NODE_COLORS.default
 }
 
 const allTypes = computed(() => {
@@ -194,7 +211,7 @@ function draw(data) {
 
   node.append('circle')
     .attr('r', d => d.type === 'Person' ? 14 : 10)
-    .attr('fill', d => getColor(d.type))
+    .attr('fill', d => getColor(d))
     .attr('stroke', '#fff')
     .attr('stroke-width', 2)
 
@@ -225,6 +242,10 @@ function draw(data) {
 }
 
 function onNodeClick(d, data) {
+  if (props.onProjectNodeClick && d.project_id) {
+    props.onProjectNodeClick(d.project_id)
+    return
+  }
   selectedNode.value = d
   const allLinks = data.links || []
   const neighbors = allLinks
@@ -273,6 +294,17 @@ onUnmounted(() => {
   border-bottom: 1px solid #eee;
 }
 .reset-btn { margin-left: auto; }
+.project-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; }
+.legend-item {
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: white;
+  font-size: 11px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .node-detail { padding: 8px 0; }
 .connected-section { margin-top: 16px; }
 .section-label { font-size: 12px; color: #999; margin-bottom: 6px; }
