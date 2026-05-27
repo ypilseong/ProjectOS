@@ -174,6 +174,20 @@ async def get_graph_stats(project_id: str):
     return dataclasses.asdict(stats)
 
 
+@router.get("/{project_id}/graph/health")
+async def get_graph_health(project_id: str):
+    from app.utils.graph_health import run_health_check
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    graph_path = proj_dir / "graph.json"
+    if not graph_path.exists():
+        raise HTTPException(status_code=404, detail="Graph not found")
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+    return run_health_check(graph)
+
+
 async def _run_ontology(task_id: str, project_id: str):
     from app.utils.logger import reset_log_project, set_log_project
     log_token = set_log_project(project_id)
