@@ -85,6 +85,7 @@ const NODE_COLORS = {
   Achievement: '#27AE60',
   Event: '#2980B9',
   Institution: '#8E44AD',
+  Category: '#34495E',
   default: '#95A5A6',
 }
 
@@ -210,18 +211,18 @@ function draw(data) {
     )
 
   node.append('circle')
-    .attr('r', d => d.type === 'Person' ? 14 : 10)
+    .attr('r', d => d.type === 'Person' ? 14 : d.type === 'Category' ? 12 : 10)
     .attr('fill', d => getColor(d))
     .attr('stroke', '#fff')
-    .attr('stroke-width', 2)
+    .attr('stroke-width', d => d.type === 'Category' ? 3 : 2)
 
   node.append('text')
     .attr('dy', '0.35em')
     .attr('text-anchor', 'middle')
-    .attr('font-size', 9)
+    .attr('font-size', d => d.type === 'Category' ? 10 : 9)
     .attr('fill', '#fff')
     .attr('pointer-events', 'none')
-    .text(d => (d.name || d.id || '').slice(0, 8))
+    .text(d => (d.name || d.id || '').slice(0, 10))
 
   simulation = d3.forceSimulation(nodes)
     .force('link', d3.forceLink(linksClone).id(d => d.id).distance(80))

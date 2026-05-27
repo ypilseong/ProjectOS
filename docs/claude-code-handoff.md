@@ -4,11 +4,40 @@ Last updated: 2026-05-27
 
 ## Current Objective
 
-user.json 기반 Person 노드 병합 완료. 다음 작업 후보:
-1. 추출 프롬프트에 사용자 이름 컨텍스트 주입 (LLM이 처음부터 동일 인물로 추출하도록)
-2. 사용자 중심 그래프 시각화 (카테고리 허브 노드)
-3. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
-4. Project 한/영 중복 병합 (같은 프로젝트가 5~7개 노드로 분리되는 문제)
+Category 허브 노드 구조 완료. 다음 작업 후보:
+1. Skill/Project cross-연결 강화 — LLM 추출 프롬프트에 "어떤 프로젝트에서 어떤 스킬 사용" 관계 명시
+2. Skill/Technology 타입 교차 중복 병합 (NLP ↔ NLP, AI ↔ Artificial Intelligence)
+3. 추출 프롬프트에 사용자 이름 컨텍스트 주입 (동일 인물 중복 추출 방지)
+
+## Completed In This Session (2026-05-27 Category Hub Restructure)
+
+### 변경 내역
+
+- `app/utils/graph_restructure.py` (신규): `add_category_hubs()` 함수
+  - LLM 추출 후 후처리로 Category 허브 노드 삽입
+  - 허브 타입: Achievements, Skills, Technologies, Projects, Roles, Organizations, Institutions, Events, Publications, People
+  - user.json 기반으로 사용자 본인 Person 식별 → 다른 Person은 `Category:People`로 묶음
+  - Person → Category(HAS) → Individual(원래 relation 유지)
+  - Person → Person 직접 연결 → Category:People 경유로 전환
+  - Skill → Project 등 cross-type 연결은 그대로 보존
+- `app/api/graph.py`: `semantic_dedup()` 후 `add_category_hubs()` 호출
+- `src/frontend/src/components/GraphView.vue`:
+  - `Category` 타입 색상 추가 (`#34495E`, 다크 그레이)
+  - Category 노드 반지름 12 (Person 14, 일반 10)
+  - Category 노드 텍스트 길이 10자로 확장
+- `tests/test_utils/test_graph_restructure.py` (신규): 9개 테스트
+
+### 검증
+
+- `python3 -m pytest tests/ -v` → **105 passed**
+- 그래프 재빌드 결과: 노드 173개, 엣지 100개
+  - 양필성 직접 연결: 7개 (Category 허브만) — 이전 ~40개 대비 대폭 감소
+  - Category 허브: Skills(7), Projects(5), Roles(5), Achievements(3), Organizations(3), Technologies(3), Events(1)
+
+### 알려진 한계
+
+- Skill → Project cross-연결이 거의 없음 (LLM이 현재 Person 중심 관계만 추출)
+  → 다음 작업: GraphBuilderAgent 프롬프트에 Skill/Technology ↔ Project 관계 추출 명시 필요
 
 ## Completed In This Session (2026-05-27 User Person Merge)
 

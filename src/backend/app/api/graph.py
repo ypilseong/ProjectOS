@@ -231,6 +231,11 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         if merged_count:
             logger.info(f"Merged {merged_count} duplicate nodes")
 
+        from app.utils.graph_restructure import add_category_hubs
+        graph, hubs_added = add_category_hubs(graph)
+        if hubs_added:
+            logger.info(f"Category hubs added: {hubs_added}")
+
         graph_agent.save(graph, graph_path)
 
         total_nodes = graph.number_of_nodes()
