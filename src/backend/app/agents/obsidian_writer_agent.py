@@ -86,6 +86,7 @@ class ObsidianWriterAgent:
                 progress_callback(i, total, name)
 
         self._write_canvas(vault, graph)
+        self._write_index(vault, graph)
 
     def _setup_vault(self, vault: Path):
         vault.mkdir(parents=True, exist_ok=True)
@@ -205,3 +206,24 @@ class ObsidianWriterAgent:
         (vault / "_index.canvas").write_text(
             json.dumps(canvas, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+
+    def _write_index(self, vault: Path, graph: nx.DiGraph) -> None:
+        """Write _index.md: entity names grouped by type for query resolution."""
+        lines = ["# Graph Index\n", "_Auto-generated. Do not edit manually._\n"]
+        by_type: dict[str, list[tuple[str, str]]] = {}
+        for node_id, data in graph.nodes(data=True):
+            ntype = data.get("type", "")
+            if ntype == "Category":
+                continue
+            name = data.get("name", "")
+            if not name:
+                continue
+            by_type.setdefault(ntype, []).append((name, data.get("description", "") or ""))
+
+        for ntype in sorted(by_type):
+            lines.append(f"\n## {ntype}\n")
+            for name, desc in sorted(by_type[ntype], key=lambda x: x[0]):
+                desc_part = f" — {desc[:60]}" if desc else ""
+                lines.append(f"- {name}{desc_part}\n")
+
+        (vault / "_index.md").write_text("".join(lines), encoding="utf-8")
