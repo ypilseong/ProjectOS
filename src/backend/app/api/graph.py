@@ -321,6 +321,12 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         if merged_count:
             logger.info(f"Merged {merged_count} duplicate nodes")
 
+        task_manager.update(task_id, message="LLM 중복 노드 검토 중...", progress=73)
+        from app.utils.llm_dedup import llm_dedup
+        graph, llm_merged = await llm_dedup(graph)
+        if llm_merged:
+            logger.info(f"LLM dedup: merged {llm_merged} node(s)")
+
         from app.utils.isolated_reextract import reextract_isolated_nodes
         isolated_before = sum(1 for n in graph.nodes if graph.degree(n) == 0)
         if isolated_before:
