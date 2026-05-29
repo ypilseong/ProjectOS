@@ -1,18 +1,121 @@
 # Claude Code Handoff
 
-Last updated: 2026-05-27
+Last updated: 2026-05-28
 
 ## Current Objective
 
-P1/P2/P3 improvements implemented and verified. All 8 tasks complete. Backend running on port 8001 with latest code.
+LLM Dedup Pass 구현 완료. 사용자 노드 그래프 중앙 고정 완료.
 
 ## 다음 작업 후보
 
-1. **그래프 재생성** — 새 코드(EntityResolver 임베딩 매칭)로 프로젝트 `29347d1e` 그래프를 재빌드해서 품질 변화 확인
-2. **고립 노드 필터 강화** — 현재 24개 고립 노드 중 노이즈성 Skill(`발언자 특정`, `풍력 발전기` 등) entity_validation에 추가
-3. **`INTERESTED_IN`, `CONTAINS`, `IDENTICAL` 관계** — 계속 버릴지 명시적 관계로 추가할지 결정
-4. **Graph health UI** — `/api/projects/{id}/graph/health` 결과를 프론트엔드에 표시하는 진단 패널
-5. **WritingAgent** — 그래프 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트
+1. **LLM dedup 2차 실행** — `isolated_reextract` 이후에도 LLM dedup 한 번 더 실행 (현재 reextract가 추가한 노드 간 중복 미처리)
+2. **Graph health UI** — `/api/projects/{id}/graph/health` 결과를 프론트엔드에 표시하는 진단 패널
+3. **고립 노드 필터 강화** — 노이즈성 Skill/Achievement (`데이터`, `실제 문제 해결` 등) entity_validation 추가
+4. **WritingAgent** — 그래프 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트 (현재 보류)
+
+## Completed In This Session (2026-05-29 Graph Center Node + LLM Dedup)
+
+### 변경 내역
+
+**사용자 노드 그래프 중앙 고정**
+
+- `src/frontend/src/components/GraphView.vue` (수정)
+  - `findCenterNodeId(nodes, links)` 헬퍼 추가 — degree 가장 높은 Person 노드 ID 반환
+  - 해당 노드 `fx = width/2, fy = height/2` 로 시뮬레이션 시작 시 중앙 고정
+  - 드래그 후에도 고정 유지 (다른 노드는 drag end 시 fx/fy 해제, 중앙 노드는 유지)
+  - 시각적 구분: 반지름 18 (일반 Person 14), 금색 테두리 `#FFD700`, 두께 4
+- Git commit: `434ea95`
+
+**LLM Dedup Pass**
+
+- `app/utils/llm_dedup.py` (신규)
+  - `_find_candidate_pairs(graph, low, high)` — 같은 타입, 유사도 [0.60, FUZZY_MATCH_THRESHOLD) 구간 쌍 탐색
+  - `_ask_llm_batch(llm_client, batch)` — 최대 20쌍씩 LLM에 질의, JSON 응답으로 merge 여부 결정
+  - `llm_dedup(graph)` — 확인된 쌍을 degree 기준으로 canonical 선택 후 병합
+  - Person 포함 (Category만 제외) — `인소영` / `인소영 교수님` 등 처리 가능
+  - LLM API 오류 시 조용히 스킵 (그래프 보존)
+- `app/api/graph.py` (수정)
+  - `semantic_dedup` 직후 `llm_dedup` 호출 추가 (progress 73%)
+- `tests/test_utils/test_llm_dedup.py` (신규) — 9개 테스트
+- Git commit: `243b177`
+
+### 검증
+
+- `python3 -m pytest tests/ -q` → **165 passed, 24 warnings**
+- Frontend build: 성공
+- Frontend dev server: `http://localhost:5174` (PID 4102684)
+
+### LLM Dedup 동작 확인 결과
+
+- 이전 빌드(21:01~21:02) 로그에서 확인:
+  - `기후변화 회의` ← `기후변화협약 컨퍼런스` (Event) 병합 ✅
+  - `인소영 교수님` ← `인소영` (Person) 병합 ✅
+- 현재 빌드(21:03)에서 LLM dedup 시점에 후보 0개 → `isolated_reextract` 이후 15개 후보 생성됨
+- **잔여 이슈**: LLM dedup이 `isolated_reextract` 전에만 실행 → reextract가 새 노드를 추가하면 dedup 기회를 놓침
+  - 해결안: `isolated_reextract` 이후에 LLM dedup을 한 번 더 실행
+
+### 알려진 잔여 이슈
+
+- LLM dedup이 `isolated_reextract` 전에만 실행됨 — reextract 후 추가된 노드 간 중복 미처리
+- `인소영` / `인소영 교수님` 현재 빌드에서 여전히 별도 노드 (isolated_reextract가 추가한 것으로 추정)
+
+---
+
+## Completed In This Session (2026-05-28 LLM Inference Params + Thinking Mode)
+
+### 변경 내역
+
+**LLM 추론 파라미터 설정**
+
+- `app/config.py` (수정)
+  - 7개 LLM 추론 파라미터 추가:
+    ```
+    LLM_TEMPERATURE: float = 1.0
+    LLM_TOP_P: float = 0.95
+    LLM_TOP_K: int = 20
+    LLM_MIN_P: float = 0.0
+    LLM_PRESENCE_PENALTY: float = 1.5
+    LLM_REPETITION_PENALTY: float = 1.0
+    LLM_THINKING_MODE: bool = True
+    ```
+- `src/backend/.env` (gitignored, 수동 설정)
+  - 위 7개 파라미터 설정값 추가
+
+**Thinking Mode + `<think>` 블록 필터링**
+
+- `app/utils/llm_client.py` (전면 재작성)
+  - `_inference_params()`: `top_k`, `min_p`, `repetition_penalty`를 `extra_body`로 전달; `LLM_THINKING_MODE=True`이면 `extra_body.chat_template_kwargs.enable_thinking=True` 추가
+  - `_strip_think()`: `<think>.*?</think>` 정규식으로 비스트리밍 응답에서 think 블록 제거
+  - `chat()`: `asyncio.wait_for` + `_strip_think` 적용
+  - `chat_json()`: `chat()` 기반으로 JSON 파싱
+  - `stream()`: 상태 머신(`in_think`, `buf`)으로 청크 경계에서도 think 블록 안전하게 필터링
+
+### 그래프 빌드 전체 비교
+
+| 빌드 | 날짜 | Nodes | Edges | Isolated | Person | 주요 특징 |
+|------|------|-------|-------|----------|--------|-----------|
+| 베이스라인 | 2026-05-27 초 | 203 | 212 | ~51 (25%) | ? | 이전 세션 기준 |
+| Build #1 (P1/P2/P3) | 2026-05-27 | 243 | 267 | 24 (9.9%) | 8 | EntityResolver, cascade reextract, health API |
+| Build #2 (EntityResolver 임베딩) | 2026-05-27 말 | 214 | 232 | 26 (12.1%) | 8 | BGE-M3 활성화, 6개 cross-lingual 매칭 |
+| **Build #3 (Thinking Mode)** | **2026-05-28** | **172** | **165** | **32 (18.6%)** | **3** | thinking mode 활성화 |
+
+### Build #3 Thinking Mode 효과 분석
+
+**긍정적:**
+- Person 노이즈 완전 제거: `발화자`, `패널`, `사회자`, `화자`, `유엔기후변화협약` Person 노드 사라짐
+- 실제 인물 3명만 유지 (양필성, 인소영, 인소영 교수님)
+- Role 분류 개선: `팀 리더` → `Role:Team Leader` 올바르게 분류; Role 노드 7→12개 증가
+- 전반적 정밀도 향상: 불확실하면 추출하지 않는 방향으로 동작
+
+**트레이드오프:**
+- 전체 노드/엣지 수 감소 (243→172): 보수적 추출로 일부 유효 엔티티 누락 가능
+- 고립 노드 비율 증가: 12.1% → 18.6% (32개)
+- `인소영` / `인소영 교수님` 여전히 별도 노드 (fuzzy threshold 미통과)
+
+### 커밋
+
+- `feae7da` — feat: add LLM inference parameters and thinking mode support
+- Push: 완료 (GitHub `main` 브랜치)
 
 ## Completed In This Session (2026-05-27 P1/P2/P3 Improvements)
 
