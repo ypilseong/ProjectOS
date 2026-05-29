@@ -146,6 +146,14 @@ function draw(data) {
     target: typeof l.target === 'object' ? l.target.id : l.target,
   }))
 
+  // Pin the most-connected Person node at center
+  const centerNodeId = findCenterNodeId(nodes, linksClone)
+  const centerNode = nodes.find(n => n.id === centerNodeId)
+  if (centerNode) {
+    centerNode.fx = width / 2
+    centerNode.fy = height / 2
+  }
+
   svg.attr('viewBox', `0 0 ${width} ${height}`)
 
   const g = svg.append('g')
@@ -204,16 +212,18 @@ function draw(data) {
         })
         .on('end', (e, d) => {
           if (!e.active) simulation.alphaTarget(0)
-          d.fx = null
-          d.fy = null
+          if (d.id !== centerNodeId) {
+            d.fx = null
+            d.fy = null
+          }
         })
     )
 
   node.append('circle')
-    .attr('r', d => d.type === 'Person' ? 14 : d.type === 'Category' ? 12 : 10)
+    .attr('r', d => d.id === centerNodeId ? 18 : d.type === 'Person' ? 14 : d.type === 'Category' ? 12 : 10)
     .attr('fill', d => getColor(d))
-    .attr('stroke', '#fff')
-    .attr('stroke-width', d => d.type === 'Category' ? 3 : 2)
+    .attr('stroke', d => d.id === centerNodeId ? '#FFD700' : '#fff')
+    .attr('stroke-width', d => d.id === centerNodeId ? 4 : d.type === 'Category' ? 3 : 2)
 
   node.append('text')
     .attr('dy', '0.35em')
@@ -264,6 +274,21 @@ function onNodeClick(d, data) {
     .filter(Boolean)
   connectedNodes.value = neighbors
   drawerVisible.value = true
+}
+
+function findCenterNodeId(nodes, links) {
+  const degrees = {}
+  for (const l of links) {
+    const s = typeof l.source === 'object' ? l.source.id : l.source
+    const t = typeof l.target === 'object' ? l.target.id : l.target
+    degrees[s] = (degrees[s] || 0) + 1
+    degrees[t] = (degrees[t] || 0) + 1
+  }
+  const persons = nodes.filter(n => n.type === 'Person')
+  if (!persons.length) return null
+  return persons.reduce((best, n) =>
+    (degrees[n.id] || 0) > (degrees[best.id] || 0) ? n : best
+  ).id
 }
 
 function resetZoom() {
