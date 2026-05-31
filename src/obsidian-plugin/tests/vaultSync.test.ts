@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildVaultSyncPlan, joinVaultPath, type VaultPayload } from "../vaultSync";
+import { buildVaultSyncPlan, joinVaultPath, type VaultPayload } from "../src/lib/vaultSync";
 
 test("joinVaultPath trims slashes and skips empty parts", () => {
   assert.equal(joinVaultPath("/ProjectOS/", "Skills", "/Python.md"), "ProjectOS/Skills/Python.md");
