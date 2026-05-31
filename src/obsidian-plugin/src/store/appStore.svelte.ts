@@ -128,6 +128,7 @@ export class AppStore {
         if (status === "completed") onCompleted?.();
       },
       () => {
+        this.task = null;
         this.status = "Task stream disconnected.";
       },
     );
