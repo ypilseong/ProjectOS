@@ -196,6 +196,7 @@ def test_graph_builder_can_use_claude_for_explicit_e2e_test(monkeypatch):
     agent = GraphBuilderAgent()
 
     assert isinstance(agent._llm._impl, _ClaudeCodeBackend)
+    assert agent._llm._impl.disable_plugins is True
 
 
 @pytest.mark.asyncio

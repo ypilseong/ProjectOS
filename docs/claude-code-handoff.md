@@ -41,6 +41,10 @@ LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현
 - Obsidian plugin settings tab에도 backend runtime 설정 추가
   - base URL/target folder와 같은 설정 화면에서 runtime reload/save 가능
 - Obsidian plugin README에 runtime mode 설정 설명 추가
+- Claude graph build subprocess에서 user Claude Code plugins/skills 제외
+  - `CLAUDE_GRAPH_DISABLE_PLUGINS=true` 기본값 추가
+  - `ClaudeTaskRunner`와 graph extraction용 `LLMClient(..., disable_plugins=True)`에 `--setting-sources project,local`, `--disable-slash-commands` 적용
+  - 일반 개발용 Claude Code 호출은 기존 plugin 사용 가능
 
 검증:
 
@@ -48,6 +52,7 @@ LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현
 - Backend full tests: `212 passed`
 - Frontend production build: success
 - Obsidian plugin tests/build: `2 passed`, production build success
+- Claude graph plugin-disable targeted tests: `32 passed`
 
 ## Completed In This Session (2026-05-31 Isolated Claude Task Runner)
 

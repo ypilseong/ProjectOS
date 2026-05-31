@@ -24,7 +24,10 @@ class GraphBuilderAgent:
     def __init__(self):
         # Graph extraction is normally a bulk per-chunk loop, so keep it local.
         # GRAPH_EXTRACTION_BACKEND allows explicit Claude Code E2E quality tests.
-        self._llm = LLMClient(backend=config.GRAPH_EXTRACTION_BACKEND)
+        self._llm = LLMClient(
+            backend=config.GRAPH_EXTRACTION_BACKEND,
+            disable_plugins=config.CLAUDE_GRAPH_DISABLE_PLUGINS,
+        )
         self._fuzzy_threshold = config.FUZZY_MATCH_THRESHOLD
         self._resolver = EntityResolver(fuzzy_threshold=self._fuzzy_threshold)
         self._user_context = self._load_user_context()

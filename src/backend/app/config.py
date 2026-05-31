@@ -10,6 +10,7 @@ class Config(BaseSettings):
     CLAUDE_TASKS_DIR: str = "/tmp/projectos-claude-tasks"
     CLAUDE_TASK_BARE: bool = False
     CLAUDE_TASK_TIMEOUT: float = 600.0
+    CLAUDE_GRAPH_DISABLE_PLUGINS: bool = True
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o"

@@ -197,8 +197,17 @@ class _OpenAIBackend:
 class _ClaudeCodeBackend:
     """Calls the `claude` CLI subprocess. No separate API key needed."""
 
-    async def _exec(self, prompt: str, output_format: str = "json") -> tuple[str, str, int]:
+    def __init__(self, disable_plugins: bool = False):
+        self.disable_plugins = disable_plugins
+
+    def _base_cmd(self, output_format: str) -> list[str]:
         cmd = ["claude", "-p", "--output-format", output_format]
+        if self.disable_plugins:
+            cmd.extend(["--setting-sources", "project,local", "--disable-slash-commands"])
+        return cmd
+
+    async def _exec(self, prompt: str, output_format: str = "json") -> tuple[str, str, int]:
+        cmd = self._base_cmd(output_format)
         if config.CLAUDE_CODE_MODEL:
             cmd.extend(["--model", config.CLAUDE_CODE_MODEL])
         cmd.append(prompt)
@@ -232,6 +241,8 @@ class _ClaudeCodeBackend:
     async def stream(self, messages: list[dict], **kwargs):
         prompt = _messages_to_text(messages)
         cmd = ["claude", "-p", "--verbose", "--output-format", "stream-json"]
+        if self.disable_plugins:
+            cmd.extend(["--setting-sources", "project,local", "--disable-slash-commands"])
         if config.CLAUDE_CODE_MODEL:
             cmd.extend(["--model", config.CLAUDE_CODE_MODEL])
         cmd.append(prompt)
@@ -270,10 +281,12 @@ class _ClaudeCodeBackend:
 
 
 class LLMClient:
-    def __init__(self, backend: str | None = None):
+    def __init__(self, backend: str | None = None, disable_plugins: bool = False):
         selected = backend or config.LLM_BACKEND
         if selected in {"claude_code", "claude"}:
-            self._impl: _OpenAIBackend | _ClaudeCodeBackend = _ClaudeCodeBackend()
+            self._impl: _OpenAIBackend | _ClaudeCodeBackend = _ClaudeCodeBackend(
+                disable_plugins=disable_plugins
+            )
         else:
             self._impl = _OpenAIBackend()
 

@@ -172,3 +172,35 @@ async def test_claude_chat_passes_configured_model(monkeypatch):
 
     assert "--model" in calls[0]
     assert "claude-haiku-4-5" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_claude_chat_can_disable_user_plugins(monkeypatch):
+    calls = []
+
+    class FakeProc:
+        async def communicate(self):
+            return (
+                b'{"type":"result","result":"ok","usage":{},"modelUsage":{}}',
+                b"",
+            )
+
+        @property
+        def returncode(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append(args)
+        return FakeProc()
+
+    monkeypatch.setattr(
+        "app.utils.llm_client.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    backend = _ClaudeCodeBackend(disable_plugins=True)
+    assert await backend.chat([{"role": "user", "content": "hi"}]) == "ok"
+
+    assert "--setting-sources" in calls[0]
+    assert "project,local" in calls[0]
+    assert "--disable-slash-commands" in calls[0]

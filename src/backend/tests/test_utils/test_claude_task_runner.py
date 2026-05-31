@@ -60,6 +60,46 @@ async def test_claude_task_runner_uses_isolated_workspace_and_system_prompt(tmp_
     assert "claude-haiku-4-5" in args
     assert "--bare" not in args
     assert "--add-dir" in args
+    assert "--setting-sources" in args
+    assert "project,local" in args
+    assert "--disable-slash-commands" in args
+
+
+@pytest.mark.asyncio
+async def test_claude_task_runner_can_keep_plugins_enabled(tmp_path, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "CLAUDE_TASKS_DIR", str(tmp_path / "tasks"))
+    monkeypatch.setattr(config, "CLAUDE_GRAPH_DISABLE_PLUGINS", False)
+    calls = []
+
+    class FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return (
+                b'{"type":"result","result":"{\\"ok\\":true}","usage":{},"modelUsage":{}}',
+                b"",
+            )
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append(args)
+        return FakeProc()
+
+    monkeypatch.setattr(
+        "app.utils.claude_task_runner.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    await ClaudeTaskRunner().run_task(
+        "task",
+        "instructions",
+        {},
+        {"type": "object", "required": ["ok"]},
+    )
+
+    assert "--setting-sources" not in calls[0]
+    assert "--disable-slash-commands" not in calls[0]
 
 
 @pytest.mark.asyncio

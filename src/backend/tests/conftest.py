@@ -31,6 +31,7 @@ def isolate_filesystem(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_TASKS_DIR", str(tmp_path / "claude_tasks"))
     monkeypatch.setattr(config, "CLAUDE_TASK_BARE", False)
     monkeypatch.setattr(config, "CLAUDE_TASK_TIMEOUT", 600.0)
+    monkeypatch.setattr(config, "CLAUDE_GRAPH_DISABLE_PLUGINS", True)
     monkeypatch.setattr(config, "CHUNK_SIZE", 500)
     monkeypatch.setattr(config, "CHUNK_OVERLAP", 50)
 

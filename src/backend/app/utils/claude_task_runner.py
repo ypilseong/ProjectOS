@@ -59,6 +59,8 @@ class ClaudeTaskRunner:
         )
 
         cmd = ["claude", "-p", "--no-session-persistence", "--output-format", "json"]
+        if config.CLAUDE_GRAPH_DISABLE_PLUGINS:
+            cmd.extend(["--setting-sources", "project,local", "--disable-slash-commands"])
         if config.CLAUDE_TASK_BARE:
             cmd.append("--bare")
         if self.model:
