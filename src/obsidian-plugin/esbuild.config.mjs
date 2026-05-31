@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import esbuildSvelte from "esbuild-svelte";
+import { sveltePreprocess } from "svelte-preprocess";
 
 const prod = process.argv[2] === "production";
 
@@ -9,7 +11,7 @@ const context = await esbuild.context({
     js: "/* ProjectOS Vault Sync */",
   },
   bundle: true,
-  entryPoints: ["main.ts"],
+  entryPoints: ["src/main.ts"],
   external: [
     "obsidian",
     "electron",
@@ -26,6 +28,12 @@ const context = await esbuild.context({
     "@lezer/lr",
     ...builtins,
   ],
+  plugins: [
+    esbuildSvelte({
+      compilerOptions: { css: "injected" },
+      preprocess: sveltePreprocess(),
+    }),
+  ],
   format: "cjs",
   logLevel: "info",
   minify: prod,
@@ -34,6 +42,8 @@ const context = await esbuild.context({
   sourcemap: prod ? false : "inline",
   target: "es2018",
   treeShaking: true,
+  mainFields: ["svelte", "browser", "module", "main"],
+  conditions: ["svelte", "browser"],
 });
 
 if (prod) {
