@@ -15,6 +15,32 @@ LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현
 5. **Wiki synthesis/lint Claude task** — 로컬 graph build 후 Claude로 vault 품질 리뷰/요약 생성
 6. **WritingAgent** — 그래프/위키 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트
 
+## Completed In This Session (2026-05-31 Obsidian Plugin Svelte Redesign)
+
+- Obsidian side-panel view를 Svelte 5 (runes) 기반으로 전면 재작성
+  - Theme-adaptive, 동적 UI — Obsidian CSS 변수 활용
+  - Settings tab은 기존 Obsidian native `Setting` API 유지 (non-Svelte)
+- 새 모듈 구조: `src/obsidian-plugin/src/`
+  - `api/` — types + HTTP client
+  - `lib/` — vaultSync (이전), runtime, graphColors + graphColorGroups 분리
+  - `store/appStore.svelte.ts` — Svelte 5 runes 기반 앱 상태
+  - `ui/` — 6개 primitive 컴포넌트
+  - `sections/` — 7개 섹션 컴포넌트
+  - `App.svelte`, `main.ts` (새 plugin entry)
+- 구 root-level `main.ts` monolith (~1180 lines) 삭제
+- Build: esbuild-svelte → single `main.js` 번들
+
+검증:
+
+- `npm run build`: success (verbatimModuleSyntax warning only, no errors)
+- `npm test`: `8 passed` (runtime, vaultSync, graphColors)
+- **주의**: 이 서버(dgx02)에서는 GTK/브라우저 미설치로 Obsidian 실제 실행 불가.
+  최종 시각적 확인은 macOS Obsidian에서 사용자가 직접 수행 필요.
+
+미완료 (별도 작업, 사용자 판단에 의해 연기):
+
+- Backend simulation 결함: edge type-match fallback, relation normalization (고정 10 relation type으로), Category 노드의 enhancement-edge 타깃 제외
+
 ## Completed In This Session (2026-05-31 Runtime Settings UI)
 
 - Backend settings API 확장
