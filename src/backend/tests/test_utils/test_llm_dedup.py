@@ -50,6 +50,29 @@ def test_find_candidate_pairs_excludes_above_high():
         assert sim < 0.85
 
 
+def test_find_candidate_pairs_includes_acronym_variants():
+    g = make_graph([
+        ("Skill:NLP", "Skill", "NLP"),
+        ("Skill:Natural Language Processing", "Skill", "Natural Language Processing"),
+    ])
+    pairs = _find_candidate_pairs(g, 0.60, 0.85)
+    found = {(p[2], p[3]) for p in pairs} | {(p[3], p[2]) for p in pairs}
+    assert ("NLP", "Natural Language Processing") in found
+
+
+def test_find_candidate_pairs_includes_contextual_cross_language_variants():
+    g = make_graph([
+        ("Skill:Natural Language Processing", "Skill", "Natural Language Processing"),
+        ("Skill:자연어처리", "Skill", "자연어처리"),
+    ])
+    g.nodes["Skill:자연어처리"]["description"] = "Natural Language Processing field studied in undergraduate"
+
+    pairs = _find_candidate_pairs(g, 0.60, 0.85)
+
+    found = {(p[2], p[3]) for p in pairs} | {(p[3], p[2]) for p in pairs}
+    assert ("Natural Language Processing", "자연어처리") in found
+
+
 def test_find_candidate_pairs_includes_person():
     g = make_graph([
         ("Person:인소영", "Person", "인소영"),
@@ -141,6 +164,27 @@ async def test_llm_dedup_no_candidates_skips_llm_call():
 
     assert count == 0
     mock_client.chat_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_llm_dedup_default_client_uses_configured_backend(monkeypatch):
+    from app.utils.llm_client import _ClaudeCodeBackend
+
+    g = make_graph([
+        ("Person:인소영", "Person", "인소영"),
+        ("Person:인소영 교수님", "Person", "인소영 교수님"),
+    ])
+    monkeypatch.setattr("app.config.config.LLM_BACKEND", "claude_code")
+    captured = {}
+
+    async def fake_ask(llm_client, batch):
+        captured["impl"] = llm_client._impl
+        return {}
+
+    with patch("app.utils.llm_dedup._ask_llm_batch", side_effect=fake_ask):
+        await llm_dedup(g)
+
+    assert isinstance(captured["impl"], _ClaudeCodeBackend)
 
 
 @pytest.mark.asyncio

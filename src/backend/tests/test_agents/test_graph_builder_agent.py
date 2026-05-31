@@ -63,6 +63,20 @@ async def test_graph_edge_has_relation(sample_ontology):
     assert len(edges) >= 1
     assert edges[0][2]["relation"] == "USES_SKILL"
     assert edges[0][2]["confidence"] == 0.95
+    assert edges[0][2]["source_chunk_id"] == "id1"
+
+
+@pytest.mark.asyncio
+async def test_graph_nodes_track_source_chunk_ids(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "test", "cv.pdf", "cv", 1, 0)]
+
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_EXTRACT)):
+        graph = await agent.run(chunks, sample_ontology)
+
+    assert graph.nodes["Skill:Python"]["source_chunk_ids"] == ["id1"]
 
 
 @pytest.mark.asyncio
@@ -161,6 +175,29 @@ def test_user_context_empty_when_no_user_json(tmp_path, monkeypatch):
     assert agent._user_context == ""
 
 
+def test_graph_builder_uses_local_llm_for_bulk_extraction(monkeypatch):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+    from app.utils.llm_client import _OpenAIBackend
+
+    monkeypatch.setattr("app.config.config.LLM_BACKEND", "claude_code")
+    monkeypatch.setattr("app.config.config.GRAPH_EXTRACTION_BACKEND", "local")
+
+    agent = GraphBuilderAgent()
+
+    assert isinstance(agent._llm._impl, _OpenAIBackend)
+
+
+def test_graph_builder_can_use_claude_for_explicit_e2e_test(monkeypatch):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+    from app.utils.llm_client import _ClaudeCodeBackend
+
+    monkeypatch.setattr("app.config.config.GRAPH_EXTRACTION_BACKEND", "claude_code")
+
+    agent = GraphBuilderAgent()
+
+    assert isinstance(agent._llm._impl, _ClaudeCodeBackend)
+
+
 @pytest.mark.asyncio
 async def test_prompt_contains_user_context(tmp_path, monkeypatch, sample_ontology):
     import json
@@ -217,6 +254,15 @@ def test_used_in_relation_is_reversed_to_project_uses_skill():
     assert relation == "USES_SKILL"
     assert (src_type, src_name) == ("Project", "Speaker Identification")
     assert (tgt_type, tgt_name) == ("Skill", "NLP")
+
+
+def test_normalize_entity_name_only_cleans_whitespace():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+
+    assert agent._normalize_entity_name("Skill", "  NLP   method ") == "NLP method"
+    assert agent._normalize_entity_name("Skill", "자연어처리") == "자연어처리"
 
 
 def test_applied_to_relation_is_normalized_to_project_uses_skill():

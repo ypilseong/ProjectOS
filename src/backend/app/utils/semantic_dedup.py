@@ -5,6 +5,7 @@ import networkx as nx
 
 from app.config import config
 from app.utils.embedding_client import EmbeddingClient
+from app.utils.entity_normalization import are_acronym_variants
 from app.utils.logger import get_logger
 from app.utils.user_config import get_user_name_variants, load_user_config
 
@@ -20,8 +21,9 @@ async def semantic_dedup(graph: nx.DiGraph) -> tuple[nx.DiGraph, int]:
     Returns the modified graph and the number of nodes merged.
     Skips silently if EMBEDDING_BASE_URL is not configured.
     """
+    graph, alias_merged = deterministic_acronym_dedup(graph)
     if not config.EMBEDDING_BASE_URL:
-        return graph, 0
+        return graph, alias_merged
 
     client = EmbeddingClient()
 
@@ -101,6 +103,55 @@ async def semantic_dedup(graph: nx.DiGraph) -> tuple[nx.DiGraph, int]:
 
     if merged:
         logger.info(f"Semantic deduplication: merged {merged} node(s)")
+    return graph, alias_merged + merged
+
+
+def deterministic_acronym_dedup(graph: nx.DiGraph) -> tuple[nx.DiGraph, int]:
+    """Merge generic acronym/full-form variants before embedding/LLM dedup."""
+    merge_pairs: list[tuple[str, str]] = []
+    by_type: dict[str, list[str]] = {}
+    for node_id, data in graph.nodes(data=True):
+        ntype = data.get("type", "")
+        if ntype in _SKIP_TYPES or not ntype:
+            continue
+        by_type.setdefault(ntype, []).append(node_id)
+
+    for node_ids in by_type.values():
+        for i, id_a in enumerate(node_ids):
+            for id_b in node_ids[i + 1:]:
+                name_a = graph.nodes[id_a].get("name", "")
+                name_b = graph.nodes[id_b].get("name", "")
+                if not are_acronym_variants(name_a, name_b):
+                    continue
+                canonical, dup = max(
+                    (id_a, id_b),
+                    key=lambda nid: (
+                        " " in graph.nodes[nid].get("name", ""),
+                        graph.degree(nid),
+                        len(graph.nodes[nid].get("name", "")),
+                    ),
+                ), min(
+                    (id_a, id_b),
+                    key=lambda nid: (
+                        " " in graph.nodes[nid].get("name", ""),
+                        graph.degree(nid),
+                        len(graph.nodes[nid].get("name", "")),
+                    ),
+                )
+                merge_pairs.append((canonical, dup))
+
+    merged = 0
+    for canonical_id, dup_id in merge_pairs:
+        if canonical_id not in graph or dup_id not in graph:
+            continue
+        dup_name = graph.nodes[dup_id].get("name", dup_id)
+        _merge_node(graph, canonical_id, dup_id)
+        merged += 1
+        logger.info(
+            f"Acronym dedup: merged '{graph.nodes[canonical_id].get('name')}'"
+            f" ← '{dup_name}' ({graph.nodes[canonical_id].get('type')})"
+        )
+
     return graph, merged
 
 
@@ -172,5 +223,9 @@ def _merge_node(graph: nx.DiGraph, canonical_id: str, dup_id: str):
     dup_sources = set(graph.nodes[dup_id].get("source_files", []))
     can_sources = set(graph.nodes[canonical_id].get("source_files", []))
     graph.nodes[canonical_id]["source_files"] = list(can_sources | dup_sources)
+
+    dup_chunks = set(graph.nodes[dup_id].get("source_chunk_ids", []))
+    can_chunks = set(graph.nodes[canonical_id].get("source_chunk_ids", []))
+    graph.nodes[canonical_id]["source_chunk_ids"] = list(can_chunks | dup_chunks)
 
     graph.remove_node(dup_id)

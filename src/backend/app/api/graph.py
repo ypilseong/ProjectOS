@@ -185,7 +185,7 @@ async def get_graph_health(project_id: str):
     if "links" in data and "edges" not in data:
         data["edges"] = data.pop("links")
     graph = nx.node_link_graph(data)
-    return run_health_check(graph)
+    return run_health_check(graph, vault_path=str(Path(config.VAULT_DIR) / project_id))
 
 
 async def _run_ontology(task_id: str, project_id: str):
@@ -285,7 +285,11 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         # --- End hash tracking ---
 
         graph_path = str(proj_dir / "graph.json")
-        graph_agent = GraphBuilderAgent()
+        if config.GRAPH_BUILD_MODE == "claude_task":
+            from app.agents.claude_task_graph_builder_agent import ClaudeTaskGraphBuilderAgent
+            graph_agent = ClaudeTaskGraphBuilderAgent()
+        else:
+            graph_agent = GraphBuilderAgent()
         total_chunks = len(chunks)
         task_manager.update(
             task_id,
@@ -301,13 +305,26 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
                 progress=30 + int(ratio * 40),
             )
 
-        graph = await graph_agent.run(
-            chunks,
-            ontology,
-            incremental=incremental,
-            graph_path=graph_path,
-            progress_callback=on_chunk_progress,
-        )
+        if config.GRAPH_BUILD_MODE == "claude_task":
+            file_paths = [
+                proj_files_dir / source_file
+                for source_file in sorted({chunk.source_file for chunk in chunks})
+                if (proj_files_dir / source_file).exists()
+            ]
+            graph = await graph_agent.run(
+                chunks,
+                ontology,
+                file_paths=file_paths,
+                progress_callback=on_chunk_progress,
+            )
+        else:
+            graph = await graph_agent.run(
+                chunks,
+                ontology,
+                incremental=incremental,
+                graph_path=graph_path,
+                progress_callback=on_chunk_progress,
+            )
 
         task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)
         from app.utils.semantic_dedup import merge_user_persons, semantic_dedup
@@ -326,6 +343,18 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         graph, llm_merged = await llm_dedup(graph)
         if llm_merged:
             logger.info(f"LLM dedup: merged {llm_merged} node(s)")
+
+        task_manager.update(task_id, message="엔티티 이름 정규화 중...", progress=74)
+        from app.utils.entity_canonicalization import canonicalize_entity_names
+        graph, canonicalized = await canonicalize_entity_names(graph)
+        if canonicalized:
+            logger.info(f"Entity canonicalization: changed {canonicalized} node(s)")
+
+        task_manager.update(task_id, message="Achievement 노드 타입 검수 중...", progress=74)
+        from app.utils.achievement_refinement import refine_achievement_nodes
+        graph, achievement_refined = await refine_achievement_nodes(graph)
+        if achievement_refined:
+            logger.info(f"Achievement refinement: changed {achievement_refined} node(s)")
 
         from app.utils.isolated_reextract import reextract_isolated_nodes
         isolated_before = sum(1 for n in graph.nodes if graph.degree(n) == 0)
@@ -348,6 +377,14 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
                 progress_callback=on_reextract_progress,
             )
             logger.info(f"Isolated re-extraction: {reconnected}/{isolated_before} connected")
+
+            task_manager.update(task_id, message="재추출 후 LLM 중복 노드 재검토 중...", progress=81)
+            graph, post_reextract_llm_merged = await llm_dedup(graph)
+            if post_reextract_llm_merged:
+                logger.info(
+                    "Post re-extraction LLM dedup: "
+                    f"merged {post_reextract_llm_merged} node(s)"
+                )
 
         from app.utils.graph_restructure import add_category_hubs
         graph, hubs_added = add_category_hubs(graph)
@@ -381,6 +418,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             graph,
             vault_path=vault_path,
             delta=incremental,
+            project_id=project_id,
             progress_callback=on_vault_progress,
         )
         stats = graph_agent.get_stats(graph)

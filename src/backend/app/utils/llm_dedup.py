@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+import re
 
 import networkx as nx
 
 from app.config import config
+from app.utils.entity_normalization import are_acronym_variants
 from app.utils.logger import get_logger
 from app.utils.semantic_dedup import _merge_node
 
@@ -40,10 +42,47 @@ def _find_candidate_pairs(
             for j in range(i + 1, len(nodes)):
                 id_a, name_a, _ = nodes[i]
                 id_b, name_b, _ = nodes[j]
+                desc_a = nodes[i][2]
+                desc_b = nodes[j][2]
                 sim = _similarity(name_a, name_b)
-                if low <= sim < high:
+                if (
+                    low <= sim < high
+                    or are_acronym_variants(name_a, name_b)
+                    or _contextual_match(name_a, desc_a, name_b, desc_b)
+                ):
                     pairs.append((id_a, id_b, name_a, name_b, ntype))
     return pairs
+
+
+def _contextual_match(name_a: str, desc_a: str, name_b: str, desc_b: str) -> bool:
+    """Catch cross-language/equivalent labels surfaced in descriptions without a fixed alias table."""
+    norm_name_a = _normalize_text(name_a)
+    norm_name_b = _normalize_text(name_b)
+    norm_desc_a = _normalize_text(desc_a)
+    norm_desc_b = _normalize_text(desc_b)
+    if len(norm_name_a) >= 8 and norm_name_a in norm_desc_b:
+        return True
+    if len(norm_name_b) >= 8 and norm_name_b in norm_desc_a:
+        return True
+
+    tokens_a = _content_tokens(f"{name_a} {desc_a}")
+    tokens_b = _content_tokens(f"{name_b} {desc_b}")
+    if not tokens_a or not tokens_b:
+        return False
+    overlap = tokens_a & tokens_b
+    return len(overlap) >= 2 and len(overlap) / min(len(tokens_a), len(tokens_b)) >= 0.5
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", " ", (value or "").lower()).strip()
+
+
+def _content_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[0-9a-z가-힣]{3,}", (value or "").lower())
+        if token not in {"the", "and", "with", "using", "based", "for"}
+    }
 
 
 async def llm_dedup(graph: nx.DiGraph, llm_client=None) -> tuple[nx.DiGraph, int]:
@@ -54,6 +93,8 @@ async def llm_dedup(graph: nx.DiGraph, llm_client=None) -> tuple[nx.DiGraph, int
     """
     if llm_client is None:
         from app.utils.llm_client import LLMClient
+        # Graph extraction stays local, but graph maintenance follows the
+        # configured backend so higher-quality models can judge merge decisions.
         llm_client = LLMClient()
 
     candidates = _find_candidate_pairs(graph, _LOW, config.FUZZY_MATCH_THRESHOLD)

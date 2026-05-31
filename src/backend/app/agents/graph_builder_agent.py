@@ -6,6 +6,7 @@ import networkx as nx
 
 from app.config import config
 from app.models.graph import GraphStats, Ontology, TextChunk
+from app.utils.entity_normalization import clean_entity_name
 from app.utils.entity_resolver import EntityResolver
 from app.utils.entity_validation import is_valid_entity, normalize_entity_type
 from app.utils.llm_client import LLMClient
@@ -21,7 +22,9 @@ RELATION_TYPE_ALIASES = {
 
 class GraphBuilderAgent:
     def __init__(self):
-        self._llm = LLMClient()
+        # Graph extraction is normally a bulk per-chunk loop, so keep it local.
+        # GRAPH_EXTRACTION_BACKEND allows explicit Claude Code E2E quality tests.
+        self._llm = LLMClient(backend=config.GRAPH_EXTRACTION_BACKEND)
         self._fuzzy_threshold = config.FUZZY_MATCH_THRESHOLD
         self._resolver = EntityResolver(fuzzy_threshold=self._fuzzy_threshold)
         self._user_context = self._load_user_context()
@@ -48,7 +51,7 @@ class GraphBuilderAgent:
         return canonical, variants
 
     def _normalize_entity_name(self, entity_type: str, name: str) -> str:
-        cleaned = " ".join((name or "").split()).strip()
+        cleaned = clean_entity_name(name)
         if entity_type != "Person":
             return cleaned
 
@@ -141,11 +144,12 @@ Allowed relation types: {', '.join(edge_types)}
 Extraction rules:
 - Do not create entities for chunks, pages, sections, or raw text snippets.
 - Extract important skills, tools, methods, model names, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
+- Use Achievement only for official or record-like profile accomplishments: GPA/grades, honors, scholarships, awards, competition placements, accepted publications, or formally measured academic/professional results. Do not use Achievement for certificates/exam names, insights, motivations, interests, lessons learned, effort, responsibilities, or ordinary project activities; classify certificates/exams as Skill when useful.
 - Do not create Keyword or Concept entities. If a term looks like an important keyword, classify it using the most specific allowed type.
 - Do not create Technology entities. Technical terms, tools, model names, platforms, frameworks, libraries, and methods must be Skill.
 - Examples: "LLM", "GPT", "Gemini", "NetworkX", "Vue", "D3.js" -> Skill.
 - Examples: "ProjectOS", "MiroFish" -> Project.
-- Examples: "그래프 시각화 기능 구현", "30% performance improvement" -> Achievement when the outcome is concrete.
+- Examples: "Total GPA 4.35/4.50", "Sanho Scholarship Recipient", "Smart Tourism Big Data Hackathon Encouragement Award" -> Achievement.
 - Tool/model names alone are not Projects. Classify them as Skill unless the text names a concrete project, product, paper, or system.
 - When a project uses a skill/tool/method/model, extract a Project -> Skill relation using USES_SKILL. Examples: "ProjectOS used Vue and NetworkX" -> ProjectOS USES_SKILL Vue, ProjectOS USES_SKILL NetworkX.
 - Use HAS_ROLE only for Person -> Role when the role is a formal title or academic position.
@@ -156,6 +160,7 @@ Extraction rules:
 - Role is ONLY for formal job titles or academic positions that could appear on a resume or business card. Examples: "Research Engineer", "PhD Student", "Professor", "Team Lead", "Software Engineer", "Undergraduate Researcher". Do NOT classify as Role: activity descriptions ("데이터 검수", "reviewing model evaluation frameworks"), participant labels ("발표자", "사회자", "패널", "moderator"), generic descriptions ("지역 주민", "기업", "약 1년간 근무"), or any phrase that is not a named position. If an item describes a concrete outcome or result → Achievement. If it describes participation in an event → Event. Vague or generic descriptions → do not extract at all.
 - Entity type values and relation values must come from the allowed lists.
 - Entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
+- Prefer one stable label for the same concept within a chunk. When both an acronym and expanded label are present, use the expanded label as the entity name.
 
 Text:
 {chunk.text}
@@ -191,6 +196,9 @@ Return only valid JSON in this exact shape:
                 sources = set(graph.nodes[node_id].get("source_files", []))
                 sources.add(chunk.source_file)
                 graph.nodes[node_id]["source_files"] = list(sources)
+                chunk_ids = set(graph.nodes[node_id].get("source_chunk_ids", []))
+                chunk_ids.add(chunk.chunk_id)
+                graph.nodes[node_id]["source_chunk_ids"] = list(chunk_ids)
             else:
                 node_id = f"{etype}:{name}"
                 graph.add_node(
@@ -199,6 +207,7 @@ Return only valid JSON in this exact shape:
                     name=name,
                     description=entity.get("description", ""),
                     source_files=[chunk.source_file],
+                    source_chunk_ids=[chunk.chunk_id],
                     attributes={},
                 )
             node_map[name] = node_id

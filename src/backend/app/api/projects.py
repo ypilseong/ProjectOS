@@ -125,6 +125,43 @@ async def download_vault(project_id: str):
     return FileResponse(tmp, filename="vault.zip", media_type="application/zip")
 
 
+@router.get("/{project_id}/vault/export")
+async def export_vault(project_id: str):
+    import networkx as nx
+
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    from app.models.graph import CareerProfile
+
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    graph_path = proj_dir / "graph.json"
+    if not graph_path.exists():
+        raise HTTPException(status_code=404, detail="Graph not built yet")
+
+    graph_data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" in graph_data and "edges" not in graph_data:
+        graph_data["edges"] = graph_data.pop("links")
+    graph = nx.node_link_graph(graph_data)
+
+    profiles = []
+    profiles_path = proj_dir / "profiles.json"
+    if profiles_path.exists():
+        profiles = [
+            CareerProfile(**profile)
+            for profile in json.loads(profiles_path.read_text(encoding="utf-8"))
+        ]
+
+    payload = ObsidianWriterAgent().build_payload(
+        graph,
+        profiles,
+        project_id=project_id,
+    )
+    return payload.model_dump()
+
+
 @router.post("/{project_id}/analysis")
 async def run_analysis(project_id: str):
     project = project_store.get(project_id)
@@ -375,7 +412,7 @@ async def _run_profiles(task_id: str, project_id: str):
         task_manager.update(task_id, message="Obsidian vault 업데이트 중...", progress=85)
         writer = ObsidianWriterAgent()
         vault_path = str(Path(config.VAULT_DIR) / project_id)
-        writer.run(graph, profiles, vault_path=vault_path, delta=True)
+        writer.run(graph, profiles, vault_path=vault_path, delta=True, project_id=project_id)
 
         task_manager.update(
             task_id,

@@ -67,6 +67,66 @@ def test_get_vault_tree_empty(client):
     assert isinstance(r.json(), list)
 
 
+def test_export_vault_returns_404_when_graph_missing(client):
+    create_r = client.post("/api/projects", json={"name": "Vault Export Missing"})
+    pid = create_r.json()["project_id"]
+
+    r = client.get(f"/api/projects/{pid}/vault/export")
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Graph not built yet"
+
+
+def test_export_vault_returns_payload(client):
+    import json as _json
+
+    import networkx as nx
+    from networkx.readwrite import json_graph
+
+    from app.config import config as _cfg
+
+    create_r = client.post("/api/projects", json={"name": "Vault Export"})
+    pid = create_r.json()["project_id"]
+    proj_dir = Path(_cfg.PROJECTS_DIR) / pid
+
+    graph = nx.DiGraph()
+    graph.add_node(
+        "Person:Yang Pilseong",
+        type="Person",
+        name="Yang Pilseong",
+        description="Researcher",
+        source_files=["cv.pdf"],
+        source_chunk_ids=["c1"],
+    )
+    graph.add_node(
+        "Skill:Python",
+        type="Skill",
+        name="Python",
+        description="Programming language",
+        source_files=["cv.pdf"],
+        source_chunk_ids=["c1"],
+    )
+    graph.add_edge("Person:Yang Pilseong", "Skill:Python", relation="USES_SKILL")
+    graph_data = json_graph.node_link_data(graph)
+    (proj_dir / "graph.json").write_text(
+        _json.dumps(graph_data, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    r = client.get(f"/api/projects/{pid}/vault/export")
+
+    assert r.status_code == 200
+    payload = r.json()
+    assert set(payload) == {"notes", "canvas", "index", "log_entry"}
+    assert payload["canvas"]["filename"] == "_index.canvas"
+    assert payload["index"]["filename"] == "_index.md"
+    assert any(
+        note["folder"] == "Career" and note["filename"] == "Yang Pilseong.md"
+        for note in payload["notes"]
+    )
+    assert "Project: " + pid in payload["log_entry"]
+
+
 def test_get_analysis_returns_404_when_not_run(client):
     r = client.post("/api/projects", json={"name": "Analysis Test"})
     pid = r.json()["project_id"]

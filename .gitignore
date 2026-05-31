@@ -11,6 +11,7 @@ node_modules/
 dist/
 
 # Runtime data — uploaded files, generated graph/vault output
+src/backend/settings.json
 src/backend/projects/*/files/
 src/backend/projects/**/*.json
 src/backend/vault/**/*.md

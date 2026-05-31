@@ -32,3 +32,5 @@ def test_keeps_valid_entities():
     assert is_valid_entity("Project", "LLM-based Lecture Video Chatbot")
     assert is_valid_entity("Role", "Research Engineer")
     assert is_valid_entity("Achievement", "2021 Smart Tourism Big Data Hackathon Encouragement Award")
+    assert is_valid_entity("Achievement", "Total GPA 4.35/4.50")
+    assert is_valid_entity("Achievement", "2024.02 Sanho Scholarship Recipient")

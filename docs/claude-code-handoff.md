@@ -1,17 +1,487 @@
 # Claude Code Handoff
 
-Last updated: 2026-05-28
+Last updated: 2026-05-31
 
 ## Current Objective
 
-LLM Dedup Pass 구현 완료. 사용자 노드 그래프 중앙 고정 완료.
+LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현이 백엔드/export/plugin scaffold까지 진행됨. ProjectOS는 UI에서 local/Claude/Claude task graph build 설정을 전환할 수 있음. vault wiki/index/log/provenance를 QueryAgent와 Health에 활용함.
 
 ## 다음 작업 후보
 
-1. **LLM dedup 2차 실행** — `isolated_reextract` 이후에도 LLM dedup 한 번 더 실행 (현재 reextract가 추가한 노드 간 중복 미처리)
-2. **Graph health UI** — `/api/projects/{id}/graph/health` 결과를 프론트엔드에 표시하는 진단 패널
-3. **고립 노드 필터 강화** — 노이즈성 Skill/Achievement (`데이터`, `실제 문제 해결` 등) entity_validation 추가
-4. **WritingAgent** — 그래프 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트 (현재 보류)
+1. **Obsidian plugin runtime validation** — `src/obsidian-plugin/main.js`, `manifest.json`을 로컬 Obsidian vault plugin 폴더에 배치해 sync/collect/query 수동 검증
+2. **Claude task graph API E2E** — UI에서 `GRAPH_BUILD_MODE=claude_task`, `CLAUDE_CODE_MODEL=claude-haiku-4-5`, 큰 `CHUNK_SIZE` 저장 후 실제 `/api/projects/{id}/graph` task path를 작은 프로젝트로 검증
+3. **Graph health UI** — `/api/projects/{id}/graph/health`의 `wiki_graph_lint` 결과를 프론트엔드에 표시하는 진단 패널
+4. **고립 노드 개선** — 현재 `a0dfcffa` health 기준 isolated 20개. 필터보다 relation re-extraction/context grouping 우선 검토
+5. **Wiki synthesis/lint Claude task** — 로컬 graph build 후 Claude로 vault 품질 리뷰/요약 생성
+6. **WritingAgent** — 그래프/위키 품질이 충분히 올라간 후 이력서/자기소개서 초안 생성 에이전트
+
+## Completed In This Session (2026-05-31 Runtime Settings UI)
+
+- Backend settings API 확장
+  - `llm_backend`
+  - `graph_build_mode=chunk|claude_task`
+  - `graph_extraction_backend=local|claude_code`
+  - `claude_code_model`
+  - `chunk_size`
+  - `chunk_overlap`
+  - 저장 즉시 runtime `config`에 반영
+- Web UI `HomeView` 설정 다이얼로그 확장
+  - local/Claude LLM backend 선택
+  - chunk extraction vs Claude task graph build 선택
+  - chunk extraction backend 선택
+  - Claude 모델명 및 chunk size/overlap 설정 가능
+- Obsidian plugin side panel에 `Runtime` 섹션 추가
+  - `/api/settings` GET/POST로 backend runtime 설정 로드/저장
+  - Project 생성/선택 없이도 graph build 동작 방식을 먼저 지정 가능
+  - `Local`, `Hybrid`, `Claude Task` 프리셋 버튼 추가
+- Obsidian plugin `Project` 섹션에 backend project list 추가
+  - `/api/projects` 결과를 카드 리스트로 렌더링
+  - 프로젝트 이름/설명/status/id 확인 후 바로 선택 가능
+  - 기존 dropdown 선택도 유지
+- Obsidian plugin settings tab에도 backend runtime 설정 추가
+  - base URL/target folder와 같은 설정 화면에서 runtime reload/save 가능
+- Obsidian plugin README에 runtime mode 설정 설명 추가
+
+검증:
+
+- Backend settings tests: `5 passed`
+- Backend full tests: `212 passed`
+- Frontend production build: success
+- Obsidian plugin tests/build: `2 passed`, production build success
+
+## Completed In This Session (2026-05-31 Isolated Claude Task Runner)
+
+- Local LLM이 없는 환경 대비용 Claude Code only task 기반 구조 추가
+- 기존 repo `CLAUDE.md`와 섞이지 않도록 task workspace를 repo 밖에 생성
+  - default: `/tmp/projectos-claude-tasks/<task_id>`
+  - task-local files: `CLAUDE.md`, `input.json`, `schema.json`, `output.json`
+  - process cwd는 task workspace
+  - task `CLAUDE.md`는 `--system-prompt`로 명시 전달
+- 이 환경에서는 `--bare`가 OAuth/keychain auth를 못 써서 `Not logged in`으로 실패함을 확인
+  - default `CLAUDE_TASK_BARE=false`
+  - API-key 기반 환경에서만 `CLAUDE_TASK_BARE=true` 사용 가능
+- `ClaudeTaskRunner` 추가
+  - isolated workspace 생성
+  - allowed paths를 `--add-dir`로 제한
+  - JSON wrapper/result 파싱
+  - required key 검증
+  - Claude usage 집계
+- `ClaudeTaskGraphBuilderAgent` 추가
+  - `GRAPH_BUILD_MODE=claude_task`일 때 graph API에서 사용 가능
+  - source file paths를 input allowlist로 전달
+  - task-specific graph extraction `CLAUDE.md` 지시사항 사용
+- Config/env 추가
+  - `GRAPH_BUILD_MODE=chunk|claude_task`
+  - `CLAUDE_TASKS_DIR`
+  - `CLAUDE_TASK_BARE`
+  - `CLAUDE_TASK_TIMEOUT`
+
+검증:
+
+- `--bare` smoke: fails with `Not logged in`, so disabled by default
+- isolated Claude task smoke with `claude-haiku-4-5`:
+  - result: `{"ok": true, "value": "ProjectOS"}`
+  - usage: 1 call, cost `$0.0447438`
+- real file graph extraction smoke with `ClaudeTaskGraphBuilderAgent`:
+  - allowed source path: `/tmp/projectos-claude-task-profile.txt`
+  - result: 4 nodes / 3 edges
+  - usage: 1 call, cost `$0.0263992`
+- Targeted tests:
+  - `test_claude_task_runner.py`
+  - `test_claude_task_graph_builder_agent.py`
+  - `test_graph_builder_agent.py`
+  - `test_llm_client.py`
+  - Result: `31 passed`
+
+## Completed In This Session (2026-05-30 Obsidian User Graph + Claude Haiku E2E)
+
+- Obsidian native Graph View에서 user node가 작아지는 문제 완화
+  - category hub 구조는 유지
+  - Person note 렌더링 시 `Person -> Category -> Entity`를 직접 wikilink로 확장
+  - `a0dfcffa`의 `vault/a0dfcffa/Career/양필성.md` 재생성 결과 wikilink 111개
+  - `_index.canvas`에서 Person node 크기 `320x120`으로 확대
+- Claude Code model 설정 추가
+  - `CLAUDE_CODE_MODEL` config/env 추가
+  - `_ClaudeCodeBackend`가 `claude -p --model <model>`로 호출
+  - `claude-haiku-4-5` 실제 CLI 호출 확인
+- Graph extraction backend override 추가
+  - 기본은 계속 `GRAPH_EXTRACTION_BACKEND=local`
+  - 품질/속도 실험 시 `GRAPH_EXTRACTION_BACKEND=claude_code`로 전체 graph extraction도 Claude Code 사용 가능
+- 큰 chunk 테스트
+  - `CHUNK_SIZE=1800`, `CHUNK_OVERLAP=150`
+  - `claude-haiku-e2e` 테스트 프로젝트로 parse → ontology → graph extraction → dedup/canonicalization/refinement → vault → analysis → query 실행
+
+검증:
+
+- Claude Code haiku smoke test:
+  - `claude -p --model claude-haiku-4-5 --output-format json ...` success
+- Claude haiku E2E:
+  - chunks: `1`, max chunk length: `685`
+  - graph: `20 nodes / 19 edges`
+  - health: isolated `0`, components `1`, duplicate pairs `0`, graph/vault mismatch `0`
+  - QueryAgent answer returned ProjectOS + skills with source reference
+  - usage: `7 calls`, `19,836 output tokens`, `92,417 cache creation tokens`, `178,794 cache read tokens`, cost `$0.23264365`
+- Backend full tests: `207 passed`
+- Obsidian plugin tests/build: `2 passed`, production build success
+- `git diff --check`: clean
+- Backend restarted on `http://localhost:8002`
+
+## Completed In This Session (2026-05-30 Obsidian Vault Sync Mode 1)
+
+Plan:
+
+- `docs/superpowers/plans/2026-05-30-obsidian-vault-sync-implementation.md`
+
+Spec:
+
+- `docs/superpowers/specs/2026-05-30-obsidian-plugin-vault-sync-design.md`
+
+변경 내역:
+
+- `app.models.vault` 추가
+  - `VaultNote`, `VaultFile`, `VaultPayload`
+- `ObsidianWriterAgent` 2계층 리팩터
+  - `build_payload(...) -> VaultPayload`
+  - `write_payload(payload, ...)`
+  - 기존 `run(...)`은 호환 래퍼로 유지
+  - 서버측 vault 디스크 쓰기, delta merge, `.obsidian`, `_index.md`, `_index.canvas`, `log.md` 유지
+- `GET /api/projects/{project_id}/vault/export` 추가
+  - `graph.json` 기반으로 vault payload JSON 반환
+  - `profiles.json`이 있으면 profile context 포함
+  - 기존 `/vault`, `/vault/file`, `/vault/download`는 유지
+- CORS에 `http://localhost:5175`, `app://obsidian.md`, `capacitor://localhost` 추가
+- `src/obsidian-plugin/` 신규 scaffold
+  - Obsidian manifest/package/tsconfig/esbuild
+  - settings: Base URL, auto-managed project id, target folder
+  - Project panel에서 backend project create/list/select 가능
+  - Project ID는 사용자가 직접 기억하지 않아도 됨
+  - target folder가 비어 있으면 `ProjectOS/<project name>/`에 동기화해 여러 프로젝트를 한 Obsidian vault/Graph View에서 분리 렌더링 가능
+  - side panel: sync, collect/upload+build, document analysis, query streaming
+  - QueryAgent는 `Query` 섹션에서 `/api/projects/{project_id}/chat` SSE로 사용
+  - 기존 웹의 `AnalysisAgent` 기능은 `Analysis` 섹션에서 `/api/projects/{project_id}/analysis`로 사용
+  - payload-to-vault mapping 단위 테스트 추가
+  - `styles.css` 추가로 Project/Sync/Collect/Analysis/Query 카드형 UI 적용
+  - Mac/Obsidian 수동 설치 문서 추가: `src/obsidian-plugin/README.md`
+  - production `main.js` build 산출
+  - installable folder: `dist/obsidian-plugin-projectos-vault-sync`
+
+검증:
+
+- Backend full tests: `203 passed`
+- `python3 -m py_compile` for changed backend modules: success
+- `git diff --check`: clean
+- Obsidian plugin: `npm install`, `npm test`, `npm run build` success
+- Runtime export check on `a0dfcffa`:
+  - `GET /api/projects/a0dfcffa/vault/export`
+  - keys: `canvas`, `index`, `log_entry`, `notes`
+  - notes: `100`
+  - canvas/index/log payload returned successfully
+
+주의:
+
+- `npm install` reported 1 moderate vulnerability. `npm audit fix --force` was not applied because it may introduce breaking changes.
+- Obsidian plugin runtime behavior still needs manual validation inside Obsidian.
+
+## Completed In This Session (2026-05-30 Claude Graph Maintenance Split)
+
+- `GraphBuilderAgent` chunk extraction은 계속 `LLMClient(backend="local")` 사용
+- `llm_dedup()` 기본 클라이언트는 설정된 backend를 따르도록 변경
+  - UI에서 `Claude Code` 선택 시 중복 병합 판단은 Claude가 수행
+  - fixed alias table 대신 acronym/context 기반 후보 확장 후 LLM 판정
+- `Achievement` schema refinement 단계 추가
+  - 성적/수상/장학금/공식 성과는 keep
+  - 동기/경험/일반 활동은 drop 또는 Project/Skill/Event 등으로 retype
+  - 자격/시험명은 Achievement가 아니라 Skill로 retype
+  - 명백한 학점/수상/장학금/honor는 Claude 오판 시에도 유지하는 schema guard 추가
+- `entity_canonicalization()` 단계 추가
+  - 고유명사/공식명은 유지하고 일반 개념/기술/역할명은 영어 canonical label로 정규화
+  - 전체 노드 무차별 검토는 느려서 후보 기반으로 제한
+  - `NLP` 같은 짧은 Skill 약어는 `Natural Language Processing` 등으로 LLM 정규화
+- 전체 graph rebuild(`delta=False`) 시 generated vault entity folders 정리
+  - stale vault pages로 인한 `vault_pages_without_nodes` 제거
+- UI 설정 문구 업데이트
+  - 그래프 chunk 추출은 local, 중복 병합/노드 타입 검수는 Claude 사용 가능
+
+검증:
+
+- Targeted backend tests: `41 passed`
+- Frontend build: success
+- `git diff --check`: clean
+- Runtime project `a0dfcffa` with `llm_backend=claude_code`:
+  - 완료: 108 nodes / 121 edges
+  - NLP 계열 skill page: `Natural Language Processing.md` 단일화
+  - Achievement pages: `Total GPA`, `Semester High Honors`, `Sanho Scholarship Recipient`, 수상 2건만 유지
+  - `TOEIC 7G5`는 Skill로 이동
+  - Graph Health: duplicate pairs 1 (`AI-based Simulation` vs `Agent-based Simulation`), graph/vault mismatch 0, isolated 20
+
+## Completed In This Session (2026-05-29 LLM Wiki-Inspired Improvements)
+
+Plan:
+
+- `docs/superpowers/plans/2026-05-29-llmwiki-inspired-improvements.md`
+
+### Task 1 — Local/Claude 역할 분리
+
+- `GraphBuilderAgent`는 전역 설정이 `claude_code`여도 `LLMClient(backend="local")` 사용
+- `isolated_reextract`도 GraphBuilderAgent를 통해 로컬 LLM 사용
+- graph build 중 `llm_dedup()` 기본 클라이언트도 로컬 LLM 사용
+- Claude Code는 ontology/profile/analysis/chat 등 단발 고품질 작업에 유지
+- UI 설정 문구에 “그래프 chunk 추출은 속도를 위해 로컬 LLM 사용” 명시
+
+### Task 2 — Vault wiki를 QueryAgent 컨텍스트로 사용
+
+- `chat` API가 project vault path를 QueryAgent에 전달
+- QueryAgent가 `vault/_index.md`를 읽고 prompt에 포함
+- QueryAgent가 매칭된 graph node의 vault page를 찾아 최대 3개 prompt에 포함
+- 그래프 relation context와 원본 chunk context는 유지
+
+### Task 3 — `log.md`
+
+- ObsidianWriterAgent가 vault 작성 시 append-only `log.md` 생성
+- project id, node/edge count, source files, changed pages 기록
+- QueryAgent가 최근 `log.md` 내용을 prompt에 포함
+
+### Task 4 — Wiki/Graph lint
+
+- Graph Health에 `wiki_graph_lint` 섹션 추가
+- 검사 항목:
+  - graph nodes without vault pages
+  - vault pages without graph nodes
+  - orphan pages
+  - duplicate pages/entity names
+  - missing source/provenance metadata
+- API `GET /api/projects/{id}/graph/health`는 project vault path를 전달
+
+### Task 5 — Provenance 강화
+
+- GraphBuilderAgent가 node에 `source_chunk_ids` 저장
+- edges는 기존 `source_chunk_id` 유지
+- vault note에 `## Sources` 섹션 추가
+- QueryAgent prompt에 출처 파일/청크 언급 지시 추가
+
+### 검증
+
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `183 passed, 24 warnings`
+- Frontend production build:
+  - `cd src/frontend && npm run build`
+  - Result: success
+- `git diff --check`
+  - clean
+
+## Completed In This Session (2026-05-29 UI LLM Backend Settings)
+
+### 변경 내역
+
+- `app/api/settings.py` (신규)
+  - `GET /api/settings` — 현재 LLM 백엔드 반환
+  - `POST /api/settings` — `local` 또는 `claude_code` 저장
+  - 저장 즉시 `config.LLM_BACKEND` 갱신
+  - `openai`, `claude` legacy alias 허용
+- `app/main.py` (수정)
+  - settings router 등록
+- `app/config.py` (수정)
+  - 기본 `LLM_BACKEND`를 `local`로 정리
+  - `SETTINGS_PATH` 추가
+- `src/frontend/src/views/HomeView.vue` (수정)
+  - 헤더에 `설정` 버튼 추가
+  - 백엔드 설정 다이얼로그 추가
+  - `로컬 LLM` / `Claude Code` 선택 후 저장 가능
+- `src/frontend/src/api/client.js` (수정)
+  - `settingsApi` 추가
+- `src/frontend/vite.config.js` (수정)
+  - `VITE_BACKEND_URL`로 dev proxy target 변경 가능
+- `.env.example`, `.gitignore` (수정)
+  - `LLM_BACKEND=local`
+  - `src/backend/settings.json` ignore
+
+### 검증
+
+- `GET /api/settings` → `{"llm_backend":"local"}`
+- `POST /api/settings {"llm_backend":"claude_code"}` → 저장 및 즉시 반영 확인
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `173 passed, 24 warnings`
+- Frontend production build:
+  - `cd src/frontend && npm run build`
+  - Result: success
+- Dev server:
+  - Backend: `http://localhost:8002`
+  - Frontend: `http://localhost:5175`
+
+## Completed In This Session (2026-05-29 Claude Code E2E + Usage Tracking)
+
+### 변경 내역
+
+- `app/utils/llm_client.py` (수정)
+  - Claude Code CLI의 `usage`, `modelUsage`, `total_cost_usd`를 누적하는 계측 추가
+  - `reset_llm_usage()`, `get_llm_usage()` 추가
+  - `chat()` 응답과 `stream-json`의 `type=="result"` 이벤트에서 사용량 집계
+- `tests/test_utils/test_llm_client.py` (수정)
+  - Claude Code 사용량 누적 테스트 추가
+
+### E2E 검증 결과
+
+임시 1청크 프로젝트를 생성해 실제 Claude Code 백엔드로 아래 경로를 실행:
+
+- parse: 1개 txt 파일 → 1 chunk
+- ontology: Claude Code `chat_json()`
+- graph build: Claude Code `chat_json()`
+- graph post-processing: semantic/LLM dedup, graph restructure, vault write
+- graph health: isolated 0, component 1, duplicate 0
+- QueryAgent: Claude Code `stream()`
+
+성공한 E2E 산출:
+
+- project id: `4e959617`
+- nodes: `12`
+- edges: `12`
+- health summary:
+  - `total_nodes=12`
+  - `total_edges=12`
+  - `isolated_count=0`
+  - `component_count=1`
+  - `duplicate_pair_count=0`
+  - `hub_count=0`
+- QueryAgent 영어 질문 `What technologies does ProjectOS use?`
+  - 그래프 관계 기반으로 `Python`, `FastAPI`, `NetworkX`, `Vue.js`, `D3.js` 응답 확인
+
+### 토큰/비용 집계
+
+성공한 E2E 전체 측정값:
+
+```json
+{
+  "calls": 3,
+  "input_tokens": 13,
+  "output_tokens": 6223,
+  "cache_creation_input_tokens": 40820,
+  "cache_read_input_tokens": 154124,
+  "web_search_requests": 0,
+  "web_fetch_requests": 0,
+  "total_cost_usd": 0.2926962
+}
+```
+
+동일 graph에서 QueryAgent 영어 질문 1회 추가 측정값:
+
+```json
+{
+  "calls": 1,
+  "input_tokens": 3,
+  "output_tokens": 723,
+  "cache_creation_input_tokens": 10437,
+  "cache_read_input_tokens": 13043,
+  "total_cost_usd": 0.05390565
+}
+```
+
+주의:
+
+- Claude Code CLI는 repo/session 컨텍스트와 cache token을 포함해 보고하므로, 일반 OpenAI-compatible API의 prompt token 계산과 다르게 보임
+- 첫 E2E 시도는 graph/vault 작성까지 성공했지만 검증 스크립트의 `links`/`edges` 변환 누락으로 후처리 실패했고, 해당 시도분 사용량은 프로세스 종료 전 출력하지 못해 집계값에 포함되지 않음
+- 한국어 QueryAgent 질문은 현재 단순 문자열 검색이 영어 graph/chunk와 매칭하지 못할 수 있음. 영어 질문에서는 graph context 사용 확인됨
+
+### 검증
+
+- `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `169 passed, 24 warnings`
+- `git diff --check`
+  - clean
+
+## Completed In This Session (2026-05-29 Claude Code Backend Verification + Post-Reextract Dedup)
+
+### 변경 내역
+
+- `app/utils/llm_client.py` (수정)
+  - Claude Code `stream()` 호출에 `--verbose` 추가
+    - Claude Code 2.1.152에서 `claude -p --output-format stream-json`는 실패하고, `--verbose`가 필요함
+  - stream subprocess 종료 코드 검사 추가
+  - `_extract_json()` 보강
+    - 기존: 전체 응답이 JSON 또는 JSON 코드펜스인 경우만 파싱
+    - 변경: 앞뒤 설명 텍스트가 섞여도 첫 JSON 객체를 찾아 파싱
+
+- `app/api/graph.py` (수정)
+  - `isolated_reextract` 이후 `llm_dedup(graph)` 2차 실행 추가
+  - reextract가 새로 연결/추가한 노드 간 중복 후보를 다시 검토
+
+- `tests/test_utils/test_llm_client.py` (신규)
+  - JSON 코드펜스 파싱
+  - 설명 텍스트가 섞인 JSON 파싱
+  - Claude Code stream 호출 인자에 `--verbose --output-format stream-json` 포함 확인
+
+- `.env.example` (수정)
+  - `LLM_BACKEND=openai`
+  - `LLM_BACKEND=claude_code` 예시 추가
+
+### 검증
+
+- `claude --version` → `2.1.152`
+- `claude -p --output-format json ...`
+  - 실제 출력에 top-level `result` 필드 존재 확인
+- `claude -p --output-format stream-json ...`
+  - `--verbose` 없으면 실패 확인
+- `claude -p --verbose --output-format stream-json ...`
+  - `type=="assistant"` 이벤트의 `message.content[].text`에서 텍스트 수신 확인
+- `LLM_BACKEND=claude_code` 직접 호출
+  - `LLMClient.chat_json()` → `{'ok': True, 'value': 7}`
+  - `LLMClient.stream()` → 텍스트 응답 수신
+- Backend full test suite:
+  - `cd src/backend && python3 -m pytest tests/ -q`
+  - Result: `168 passed, 24 warnings`
+- Frontend production build:
+  - `cd src/frontend && npm run build`
+  - Result: success
+  - Warning remains: Vite large chunk over 500 kB
+- `git diff --check` → clean
+
+### 아직 미검증
+
+- 기존 대형 프로젝트 `29347d1e` 전체 파일 대상으로 `LLM_BACKEND=claude_code` graph build 장시간 실행
+
+## Completed In This Session (2026-05-29 Claude Code CLI Backend)
+
+### 변경 내역
+
+**`LLM_BACKEND=claude_code` 옵션 추가 — 전체 파이프라인을 Claude Code CLI로 구동**
+
+- `app/config.py` (수정)
+  - `LLM_BACKEND: str = "openai"` 추가 (`"openai"` | `"claude_code"`)
+  - `.env`에 `LLM_BACKEND=claude_code` 설정 시 Claude Code CLI 백엔드 활성화
+
+- `app/utils/llm_client.py` (전면 재구성)
+  - 기존 OpenAI SDK 로직 → `_OpenAIBackend` 클래스로 분리
+  - `_ClaudeCodeBackend` 클래스 신규 추가
+    - `chat()`: `claude -p --output-format json <prompt>` subprocess 호출, `result` 필드 반환
+    - `chat_json()`: JSON 지시문 프롬프트에 삽입 + 마크다운 코드 펜스 제거 후 파싱
+    - `stream()`: `claude -p --verbose --output-format stream-json` 파싱; `type==assistant` 이벤트에서 텍스트 추출, fallback으로 `type==result` 사용
+  - `LLMClient` → `config.LLM_BACKEND` 기반으로 `_OpenAIBackend` 또는 `_ClaudeCodeBackend` 선택
+  - `_messages_to_text()` 헬퍼: messages 리스트를 `<system>`, `<assistant>`, user 텍스트로 직렬화
+  - `_extract_json()` 헬퍼: 마크다운 코드 펜스 처리 후 JSON 파싱
+
+### 영향 범위
+
+`LLM_BACKEND=claude_code` 설정 시 아래 모든 에이전트가 Claude Code CLI를 사용:
+- `OntologyAgent` — `chat_json()` 사용
+- `GraphBuilderAgent` — `chat_json()` 사용
+- `ProfileAgent` — `chat_json()` 사용
+- `ObsidianWriterAgent` — `chat()` 사용
+- `LLMDedupAgent` — `chat_json()` 사용
+- `QueryAgent` — `stream()` 사용
+
+### 주의사항
+
+- `chat_json()`은 JSON 강제 모드 없이 프롬프트 지시문에 의존 → 응답이 마크다운 코드 블록이거나 앞뒤 설명 텍스트가 일부 섞이면 첫 JSON 객체를 찾아 파싱
+- `stream()`은 token-by-token 스트리밍이 아닐 수 있음 (CLI가 `assistant` 이벤트를 한 번에 출력하면 전체 텍스트가 한꺼번에 전달)
+- `top_k`, `min_p`, `repetition_penalty`, `thinking_mode` 등 로컬 LLM 파라미터는 Claude Code 백엔드에서 무시됨
+- Claude Code CLI(`claude`)가 PATH에 있어야 동작
+
+### 미검증 항목
+
+- 전체 그래프 빌드 파이프라인 end-to-end 테스트 미실시
+
+---
 
 ## Completed In This Session (2026-05-29 Graph Center Node + LLM Dedup)
 
@@ -36,6 +506,7 @@ LLM Dedup Pass 구현 완료. 사용자 노드 그래프 중앙 고정 완료.
   - LLM API 오류 시 조용히 스킵 (그래프 보존)
 - `app/api/graph.py` (수정)
   - `semantic_dedup` 직후 `llm_dedup` 호출 추가 (progress 73%)
+  - 2026-05-29 후속: `isolated_reextract` 이후 `llm_dedup` 2차 호출 추가
 - `tests/test_utils/test_llm_dedup.py` (신규) — 9개 테스트
 - Git commit: `243b177`
 
@@ -51,13 +522,11 @@ LLM Dedup Pass 구현 완료. 사용자 노드 그래프 중앙 고정 완료.
   - `기후변화 회의` ← `기후변화협약 컨퍼런스` (Event) 병합 ✅
   - `인소영 교수님` ← `인소영` (Person) 병합 ✅
 - 현재 빌드(21:03)에서 LLM dedup 시점에 후보 0개 → `isolated_reextract` 이후 15개 후보 생성됨
-- **잔여 이슈**: LLM dedup이 `isolated_reextract` 전에만 실행 → reextract가 새 노드를 추가하면 dedup 기회를 놓침
-  - 해결안: `isolated_reextract` 이후에 LLM dedup을 한 번 더 실행
+- 2026-05-29 후속으로 `isolated_reextract` 이후 LLM dedup 2차 실행 반영 완료
 
 ### 알려진 잔여 이슈
 
-- LLM dedup이 `isolated_reextract` 전에만 실행됨 — reextract 후 추가된 노드 간 중복 미처리
-- `인소영` / `인소영 교수님` 현재 빌드에서 여전히 별도 노드 (isolated_reextract가 추가한 것으로 추정)
+- `인소영` / `인소영 교수님` 현재 저장된 빌드에서는 여전히 별도 노드일 수 있음 — 새 그래프 빌드에서 2차 dedup 효과 확인 필요
 
 ---
 

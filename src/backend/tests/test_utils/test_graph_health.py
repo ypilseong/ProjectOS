@@ -5,6 +5,7 @@ from app.utils.graph_health import (
     check_duplicate_candidates,
     check_hub_nodes,
     check_isolated_nodes,
+    check_wiki_graph_consistency,
     check_weak_components,
     run_health_check,
 )
@@ -87,4 +88,36 @@ def test_run_health_check_returns_all_sections():
     assert "weak_components" in report
     assert "duplicate_candidates" in report
     assert "hub_nodes" in report
+    assert "wiki_graph_lint" in report
     assert "summary" in report
+
+
+def test_check_wiki_graph_consistency_finds_missing_and_extra_pages(tmp_path):
+    g = nx.DiGraph()
+    g.add_node("Skill:Python", type="Skill", name="Python", source_files=["cv.pdf"])
+    g.add_node("Project:Missing", type="Project", name="Missing", source_files=[])
+    g.add_edge("Project:Missing", "Skill:Python", relation="USES_SKILL")
+
+    skills = tmp_path / "Skills"
+    skills.mkdir()
+    (skills / "Python.md").write_text("# Python\n\n[[Missing]]", encoding="utf-8")
+    misc = tmp_path / "Misc"
+    misc.mkdir()
+    (misc / "Extra.md").write_text("# Extra", encoding="utf-8")
+
+    result = check_wiki_graph_consistency(g, str(tmp_path))
+
+    assert any(item["node_id"] == "Project:Missing" for item in result["graph_nodes_without_pages"])
+    assert any(item["page"] == "Misc/Extra.md" for item in result["vault_pages_without_nodes"])
+    assert any(item["page"] == "Misc/Extra.md" for item in result["orphan_pages"])
+    assert any(item["node_id"] == "Project:Missing" for item in result["missing_source_nodes"])
+
+
+def test_run_health_check_counts_wiki_lint_issues(tmp_path):
+    g = nx.DiGraph()
+    g.add_node("Skill:Python", type="Skill", name="Python", source_files=[])
+
+    report = run_health_check(g, vault_path=str(tmp_path))
+
+    assert report["summary"]["graph_nodes_without_pages_count"] == 1
+    assert report["summary"]["missing_source_node_count"] == 1

@@ -36,7 +36,8 @@ async def chat(project_id: str, body: dict):
     agent = QueryAgent()
 
     async def generate():
-        async for token in agent.stream(question, graph, chunks):
+        vault_path = str(Path(config.VAULT_DIR) / project_id)
+        async for token in agent.stream(question, graph, chunks, vault_path=vault_path):
             yield f"data: {json.dumps({'token': token})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 

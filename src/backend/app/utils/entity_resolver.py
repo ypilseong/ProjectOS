@@ -4,6 +4,7 @@ import networkx as nx
 import numpy as np
 
 from app.config import config
+from app.utils.entity_normalization import are_acronym_variants
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -77,4 +78,7 @@ class EntityResolver:
         return None
 
     def _fuzzy_match(self, a: str, b: str) -> bool:
-        return SequenceMatcher(None, a.lower(), b.lower()).ratio() >= self._fuzzy_threshold
+        return (
+            SequenceMatcher(None, a.lower(), b.lower()).ratio() >= self._fuzzy_threshold
+            or are_acronym_variants(a, b)
+        )

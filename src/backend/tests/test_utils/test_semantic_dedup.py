@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, patch
 import networkx as nx
 import pytest
 
-from app.utils.semantic_dedup import merge_user_persons, semantic_dedup, _merge_node
+from app.utils.semantic_dedup import (
+    deterministic_acronym_dedup,
+    merge_user_persons,
+    semantic_dedup,
+    _merge_node,
+)
 
 
 def _unit_vec(dim: int, idx: int) -> list[float]:
@@ -47,6 +52,22 @@ def test_merge_node_redirects_edges():
     assert set(g.nodes["Skill:NLP"]["source_files"]) == {"a.pdf", "b.pdf"}
 
 
+def test_merge_node_preserves_source_chunks():
+    g = nx.DiGraph()
+    g.add_node("Skill:NLP", type="Skill", name="NLP", source_files=[], source_chunk_ids=["a"])
+    g.add_node(
+        "Skill:자연어처리",
+        type="Skill",
+        name="자연어처리",
+        source_files=[],
+        source_chunk_ids=["b"],
+    )
+
+    _merge_node(g, "Skill:NLP", "Skill:자연어처리")
+
+    assert set(g.nodes["Skill:NLP"]["source_chunk_ids"]) == {"a", "b"}
+
+
 def test_merge_node_does_not_duplicate_existing_edge():
     g = nx.DiGraph()
     g.add_node("Skill:NLP", type="Skill", name="NLP", source_files=[])
@@ -64,6 +85,24 @@ def test_merge_node_does_not_duplicate_existing_edge():
 # ---------------------------------------------------------------------------
 # semantic_dedup integration tests (embedding client mocked)
 # ---------------------------------------------------------------------------
+
+def test_deterministic_acronym_dedup_merges_full_form_variants():
+    g = _make_graph(
+        ("Skill", "NLP"),
+        ("Skill", "Natural Language Processing"),
+        ("Skill", "Python"),
+    )
+    g.add_node("Person:양필성", type="Person", name="양필성", source_files=[])
+    g.add_edge("Person:양필성", "Skill:NLP", relation="USES_SKILL")
+
+    g, merged = deterministic_acronym_dedup(g)
+
+    assert merged == 1
+    skill_names = {d["name"] for _, d in g.nodes(data=True) if d.get("type") == "Skill"}
+    assert "Natural Language Processing" in skill_names
+    assert "NLP" not in skill_names
+    nlp_node = next(n for n, d in g.nodes(data=True) if d.get("name") == "Natural Language Processing")
+    assert g.has_edge("Person:양필성", nlp_node)
 
 @pytest.mark.asyncio
 async def test_dedup_merges_similar_same_type_nodes(monkeypatch):

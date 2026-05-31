@@ -1,0 +1,335 @@
+.projectos-panel {
+  --projectos-accent: var(--interactive-accent);
+  --projectos-card-border: var(--background-modifier-border);
+  --projectos-soft: var(--background-secondary);
+  padding: 12px;
+}
+
+.projectos-panel h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.projectos-card {
+  border: 1px solid var(--projectos-card-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.projectos-card-header {
+  margin-bottom: 10px;
+}
+
+.projectos-card-header h3,
+.projectos-summary-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.projectos-card-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.projectos-runtime-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  margin-bottom: 8px;
+}
+
+.projectos-runtime-label {
+  color: var(--text-normal);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.projectos-status-pill {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.projectos-runtime-presets {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.projectos-preset-button {
+  width: 100%;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  text-align: left;
+}
+
+.projectos-preset-button strong,
+.projectos-preset-button span {
+  display: block;
+}
+
+.projectos-preset-button strong {
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+
+.projectos-preset-button span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.projectos-preset-button.is-active {
+  border-color: var(--interactive-accent);
+  background: var(--background-primary-alt);
+}
+
+.projectos-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.projectos-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.projectos-project-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  text-align: left;
+}
+
+.projectos-project-item.is-selected {
+  border-color: var(--interactive-accent);
+  background: var(--background-primary-alt);
+}
+
+.projectos-project-main {
+  min-width: 0;
+}
+
+.projectos-project-main strong,
+.projectos-project-main span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectos-project-main strong {
+  font-size: 12px;
+}
+
+.projectos-project-main span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.projectos-project-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: 84px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.projectos-project-meta code {
+  max-width: 94px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.projectos-empty {
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.projectos-input,
+.projectos-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+}
+
+.projectos-field {
+  min-width: 0;
+}
+
+.projectos-field-label {
+  display: block;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.projectos-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 8px;
+}
+
+.projectos-runtime-note {
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.projectos-file {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.projectos-button {
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.projectos-button-primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.projectos-answer,
+.projectos-analysis {
+  margin-top: 10px;
+}
+
+.projectos-answer {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  color: var(--text-normal);
+}
+
+.projectos-summary {
+  border-left: 3px solid var(--projectos-accent);
+  background: var(--projectos-soft);
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.projectos-summary p {
+  margin: 6px 0;
+  line-height: 1.55;
+}
+
+.projectos-meta,
+.projectos-muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projectos-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projectos-issue {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 9px;
+  background: var(--background-primary-alt);
+}
+
+.projectos-issue strong {
+  display: inline-block;
+  margin-left: 6px;
+}
+
+.projectos-issue p {
+  margin: 8px 0;
+  line-height: 1.45;
+}
+
+.projectos-severity {
+  display: inline-block;
+  min-width: 46px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: white;
+}
+
+.projectos-severity-high {
+  background: #d14d41;
+}
+
+.projectos-severity-medium {
+  background: #c9892b;
+}
+
+.projectos-severity-low {
+  background: #6b8f71;
+}
+
+.projectos-suggestion {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--text-normal);
+  line-height: 1.45;
+}
+
+.projectos-draft {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-text);
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.projectos-settings-runtime {
+  margin-top: 20px;
+}
+
+.projectos-settings-runtime h3 {
+  margin: 0 0 6px;
+}

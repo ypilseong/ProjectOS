@@ -7,6 +7,11 @@ export const userApi = {
   set: (data) => api.post('/user', data),
 }
 
+export const settingsApi = {
+  get: () => api.get('/settings'),
+  set: (data) => api.post('/settings', data),
+}
+
 export const projectsApi = {
   list: () => api.get('/projects'),
   create: (data) => api.post('/projects', data),
