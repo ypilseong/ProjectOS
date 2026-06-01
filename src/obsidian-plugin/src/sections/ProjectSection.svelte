@@ -5,7 +5,8 @@
   import type { AppStore } from "../store/appStore.svelte";
 
   let { store }: { store: AppStore } = $props();
-  let newName = $state(store.plugin.settings.projectName);
+  const initialProjectName = () => store.plugin.settings.projectName;
+  let newName = $state(initialProjectName());
 </script>
 
 <Card title="Project" subtitle="Select a backend project.">
@@ -31,20 +32,22 @@
         <div class="pos-empty">No backend projects found.</div>
       {/if}
       {#each store.projects as project}
-        <button
+        <div
           class="pos-project-item"
           class:is-selected={project.project_id === store.projectId}
-          onclick={() => store.selectProject(project.project_id)}
         >
-          <div class="pos-project-main">
-            <strong>{project.name}</strong>
-            {#if project.description}<span>{project.description}</span>{/if}
-          </div>
-          <div class="pos-project-meta">
-            <span>{project.status ?? "unknown"}</span>
-            <code>{project.project_id}</code>
-          </div>
-        </button>
+          <button class="pos-project-select" onclick={() => store.selectProject(project.project_id)}>
+            <div class="pos-project-main">
+              <strong>{project.name}</strong>
+              {#if project.description}<span>{project.description}</span>{/if}
+            </div>
+            <div class="pos-project-meta">
+              <span>{project.status ?? "unknown"}</span>
+              <code>{project.project_id}</code>
+            </div>
+          </button>
+          <Button variant="danger" onclick={() => store.deleteProject(project.project_id)}>Delete</Button>
+        </div>
       {/each}
     </div>
   </Disclosure>

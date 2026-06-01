@@ -1,31 +1,133 @@
 import { Notice } from "obsidian";
+import { createSubscriber } from "svelte/reactivity";
 
 import { ApiClient } from "../api/client";
 import { AnalysisResult, ProjectSummary, SimulationResult, TaskUpdate } from "../api/types";
 import { BackendSettings, DEFAULT_BACKEND_SETTINGS, mergeBackendSettings } from "../lib/runtime";
+import { deletionTargetFolder, projectTargetFolder } from "../lib/vaultSync";
 
 export interface PluginBridge {
   settings: { baseUrl: string; projectId: string; projectName: string; targetFolder: string };
   saveSettings(): Promise<void>;
+  deleteProjectFolder(targetFolder: string): Promise<boolean>;
 }
 
 export class AppStore {
-  status = $state("Idle");
-  task = $state<TaskUpdate | null>(null);
-  projects = $state<ProjectSummary[]>([]);
-  backendSettings = $state<BackendSettings>({ ...DEFAULT_BACKEND_SETTINGS });
-  runtimeDirty = $state(false);
-  analysis = $state<AnalysisResult | null>(null);
-  simulation = $state<SimulationResult | null>(null);
-  simulationLive = $state("");
-  answer = $state("");
+  private notify = (): void => {};
+  private subscribe = createSubscriber((update) => {
+    this.notify = update;
+    return () => {
+      this.notify = (): void => {};
+    };
+  });
+
+  private _status = "Idle";
+  private _task: TaskUpdate | null = null;
+  private _projects: ProjectSummary[] = [];
+  private _backendSettings: BackendSettings = { ...DEFAULT_BACKEND_SETTINGS };
+  private _runtimeDirty = false;
+  private _analysis: AnalysisResult | null = null;
+  private _simulation: SimulationResult | null = null;
+  private _simulationLive = "";
+  private _answer = "";
 
   constructor(
     public client: ApiClient,
     public plugin: PluginBridge,
   ) {}
 
+  get status(): string {
+    this.subscribe();
+    return this._status;
+  }
+
+  set status(value: string) {
+    this._status = value;
+    this.notify();
+  }
+
+  get task(): TaskUpdate | null {
+    this.subscribe();
+    return this._task;
+  }
+
+  set task(value: TaskUpdate | null) {
+    this._task = value;
+    this.notify();
+  }
+
+  get projects(): ProjectSummary[] {
+    this.subscribe();
+    return this._projects;
+  }
+
+  set projects(value: ProjectSummary[]) {
+    this._projects = value;
+    this.notify();
+  }
+
+  get backendSettings(): BackendSettings {
+    this.subscribe();
+    return this._backendSettings;
+  }
+
+  set backendSettings(value: BackendSettings) {
+    this._backendSettings = value;
+    this.notify();
+  }
+
+  get runtimeDirty(): boolean {
+    this.subscribe();
+    return this._runtimeDirty;
+  }
+
+  set runtimeDirty(value: boolean) {
+    this._runtimeDirty = value;
+    this.notify();
+  }
+
+  get analysis(): AnalysisResult | null {
+    this.subscribe();
+    return this._analysis;
+  }
+
+  set analysis(value: AnalysisResult | null) {
+    this._analysis = value;
+    this.notify();
+  }
+
+  get simulation(): SimulationResult | null {
+    this.subscribe();
+    return this._simulation;
+  }
+
+  set simulation(value: SimulationResult | null) {
+    this._simulation = value;
+    this.notify();
+  }
+
+  get simulationLive(): string {
+    this.subscribe();
+    return this._simulationLive;
+  }
+
+  set simulationLive(value: string) {
+    this._simulationLive = value;
+    this.notify();
+  }
+
+  get answer(): string {
+    this.subscribe();
+    return this._answer;
+  }
+
+  set answer(value: string) {
+    this._answer = value;
+    this.notify();
+  }
+
   get projectId(): string {
+    this.subscribe();
     return this.plugin.settings.projectId.trim();
   }
 
@@ -38,10 +140,7 @@ export class AppStore {
   }
 
   targetFolder(): string {
-    const explicit = this.plugin.settings.targetFolder.trim();
-    if (explicit) return explicit;
-    const name = this.plugin.settings.projectName.trim() || this.projectId;
-    return name ? `ProjectOS/${name}` : "ProjectOS";
+    return projectTargetFolder(this.plugin.settings);
   }
 
   private fail(message: string, error: unknown): void {
@@ -81,6 +180,39 @@ export class AppStore {
       new Notice(`ProjectOS project created: ${project.name}`);
     } catch (error) {
       this.fail("Project create failed.", error);
+    }
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    const project = this.projects.find((p) => p.project_id === projectId);
+    const label = project?.name ?? projectId;
+    if (!projectId) return;
+    const localFolder = deletionTargetFolder(this.plugin.settings, projectId, label);
+    if (!window.confirm(
+      `Delete ProjectOS project "${label}"? This removes backend data and local vault folder "${localFolder}".`,
+    )) return;
+
+    this.status = "Deleting project...";
+    try {
+      await this.client.deleteProject(projectId);
+      const removedLocalFolder = await this.plugin.deleteProjectFolder(localFolder);
+      if (this.plugin.settings.projectId === projectId) {
+        this.plugin.settings.projectId = "";
+        this.plugin.settings.projectName = "";
+        this.analysis = null;
+        this.simulation = null;
+        this.answer = "";
+        await this.plugin.saveSettings();
+      }
+      await this.refreshProjects();
+      this.status = `Deleted ${label}.`;
+      new Notice(
+        removedLocalFolder
+          ? `ProjectOS project deleted: ${label}; removed ${localFolder}.`
+          : `ProjectOS project deleted: ${label}; no local folder found at ${localFolder}.`,
+      );
+    } catch (error) {
+      this.fail("Project delete failed.", error);
     }
   }
 

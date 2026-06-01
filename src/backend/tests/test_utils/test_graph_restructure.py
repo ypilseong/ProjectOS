@@ -1,7 +1,11 @@
 import networkx as nx
 import pytest
 
-from app.utils.graph_restructure import add_category_hubs
+from app.utils.graph_restructure import (
+    add_category_hubs,
+    build_entity_details,
+    demote_project_context_nodes,
+)
 
 
 def _make_graph() -> nx.DiGraph:
@@ -112,3 +116,125 @@ def test_idempotent_hub_creation(tmp_path, monkeypatch):
     g, hubs1 = add_category_hubs(g)
     g, hubs2 = add_category_hubs(g)
     assert hubs2 == 0
+
+
+def test_semantic_project_skill_is_promoted_under_skill_hub(tmp_path, monkeypatch):
+    user_json = tmp_path / "user.json"
+    user_json.write_text('{"name": "양필성", "display_name": "Pilseong Yang"}')
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    g = nx.DiGraph()
+    g.add_node("Person:양필성", type="Person", name="양필성", source_files=[])
+    g.add_node("Project:ProjectOS", type="Project", name="ProjectOS", source_files=[])
+    g.add_node("Skill:FastAPI", type="Skill", name="FastAPI", source_files=[])
+    g.add_edge("Person:양필성", "Project:ProjectOS", relation="DEVELOPED")
+    g.add_edge("Project:ProjectOS", "Skill:FastAPI", relation="USES_SKILL")
+
+    g, _ = add_category_hubs(g)
+
+    assert g.has_edge("Person:양필성", "Category:Projects")
+    assert g.has_edge("Category:Projects", "Project:ProjectOS")
+    assert g.has_edge("Person:양필성", "Category:Skills")
+    assert g.has_edge("Category:Skills", "Skill:FastAPI")
+    assert g.has_edge("Project:ProjectOS", "Skill:FastAPI")
+
+
+def test_project_context_leaf_is_demoted_to_project_detail():
+    g = nx.DiGraph()
+    g.add_node("Project:ProjectOS", type="Project", name="ProjectOS", source_files=["readme.md"])
+    g.add_node(
+        "Skill:graph JSON generation",
+        type="Skill",
+        name="graph JSON generation",
+        source_files=["readme.md"],
+        source_chunk_ids=["c1"],
+    )
+    g.add_edge("Project:ProjectOS", "Skill:graph JSON generation", relation="USES_SKILL")
+
+    g, demoted = demote_project_context_nodes(g)
+    g, _ = build_entity_details(g)
+
+    assert demoted == 1
+    assert "Skill:graph JSON generation" not in g
+    detail = g.nodes["Project:ProjectOS"]["details"]
+    features = next(s for s in detail["sections"] if s["title"] == "주요 기능")
+    assert "graph JSON generation" in features["items"]
+
+
+def test_project_context_phrase_promotes_embedded_skill():
+    g = nx.DiGraph()
+    g.add_node("Project:ProjectOS", type="Project", name="ProjectOS", source_files=["readme.md"])
+    g.add_node(
+        "Skill:FastAPI backend architecture",
+        type="Skill",
+        name="FastAPI backend architecture",
+        source_files=["readme.md"],
+        source_chunk_ids=["c1"],
+    )
+    g.add_edge("Project:ProjectOS", "Skill:FastAPI backend architecture", relation="USES_SKILL")
+
+    g, demoted = demote_project_context_nodes(g)
+
+    assert demoted == 1
+    assert "Skill:FastAPI backend architecture" not in g
+    assert "Skill:FastAPI" in g
+    assert g.has_edge("Project:ProjectOS", "Skill:FastAPI")
+
+
+def test_build_entity_details_uses_type_specific_sections(tmp_path, monkeypatch):
+    user_json = tmp_path / "user.json"
+    user_json.write_text('{"name": "양필성", "display_name": "Pilseong Yang"}')
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    g = nx.DiGraph()
+    g.add_node("Person:양필성", type="Person", name="양필성", source_files=["cv.pdf"])
+    g.add_node("Project:ProjectOS", type="Project", name="ProjectOS", source_files=["readme.md"])
+    g.add_node("Skill:FastAPI", type="Skill", name="FastAPI", source_files=["readme.md"])
+    g.add_edge("Person:양필성", "Project:ProjectOS", relation="DEVELOPED")
+    g.add_edge("Project:ProjectOS", "Skill:FastAPI", relation="USES_SKILL")
+
+    g, _ = add_category_hubs(g)
+    g, changed = build_entity_details(g)
+
+    assert changed == 3
+    project_sections = {
+        section["title"]: section["items"]
+        for section in g.nodes["Project:ProjectOS"]["details"]["sections"]
+    }
+    person_sections = {
+        section["title"]: section["items"]
+        for section in g.nodes["Person:양필성"]["details"]["sections"]
+    }
+    assert any("FastAPI" in item for item in project_sections["사용 기술"])
+    assert any("ProjectOS" in item for item in person_sections["관련 프로젝트"])
+
+
+def test_build_entity_details_source_section_uses_file_names_only():
+    g = nx.DiGraph()
+    g.add_node(
+        "Project:ProjectOS",
+        type="Project",
+        name="ProjectOS",
+        source_files=["readme.md"],
+        source_chunk_ids=["chunk-1"],
+        context_items=[
+            {
+                "name": "graph JSON generation",
+                "source_files": ["readme.md"],
+                "source_chunk_ids": ["chunk-2"],
+            }
+        ],
+    )
+
+    g, _ = build_entity_details(g)
+
+    sections = {
+        section["title"]: section["items"]
+        for section in g.nodes["Project:ProjectOS"]["details"]["sections"]
+    }
+    rendered_sources = "\n".join(sections["근거 source"])
+    assert "readme.md" in rendered_sources
+    assert "chunk-1" not in rendered_sources
+    assert "chunk-2" not in rendered_sources
+    assert "Chunks:" not in rendered_sources
+    assert "Files:" not in rendered_sources

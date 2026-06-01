@@ -2,7 +2,8 @@
   import { slide } from "svelte/transition";
   import type { Snippet } from "svelte";
   let { label, open = false, children }: { label: string; open?: boolean; children: Snippet } = $props();
-  let expanded = $state(open);
+  const initialOpen = () => open;
+  let expanded = $state(initialOpen());
 </script>
 
 <div class="pos-disclosure">

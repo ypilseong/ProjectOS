@@ -124,6 +124,12 @@ def test_export_vault_returns_payload(client):
         note["folder"] == "Career" and note["filename"] == "Yang Pilseong.md"
         for note in payload["notes"]
     )
+    person_note = next(
+        note for note in payload["notes"]
+        if note["folder"] == "Career" and note["filename"] == "Yang Pilseong.md"
+    )
+    assert "## Details" in person_note["content"]
+    assert "### 보유 기술" in person_note["content"]
     assert "Project: " + pid in payload["log_entry"]
 
 
@@ -217,6 +223,72 @@ def test_run_profiles_returns_task_id_when_graph_and_user_exist(client):
 
     with patch("app.agents.profile_agent.ProfileAgent.run", new=AsyncMock(return_value=[])):
         r2 = client.post(f"/api/projects/{pid}/profiles")
+
+    assert r2.status_code == 200
+    assert "task_id" in r2.json()
+
+
+def test_get_simulation_returns_404_when_not_run(client):
+    r = client.post("/api/projects", json={"name": "Simulation Test"})
+    pid = r.json()["project_id"]
+    r2 = client.get(f"/api/projects/{pid}/simulation")
+    assert r2.status_code == 404
+
+
+def test_run_simulation_requires_graph(client):
+    r = client.post("/api/projects", json={"name": "No Simulation Graph"})
+    pid = r.json()["project_id"]
+    r2 = client.post(f"/api/projects/{pid}/simulation", json={"query": "Improve CV"})
+    assert r2.status_code == 400
+
+
+def test_run_simulation_returns_task_id_when_graph_and_chunks_exist(client):
+    import json as _json
+    from pathlib import Path
+    from unittest.mock import AsyncMock, patch
+
+    from app.config import config as _cfg
+
+    r = client.post("/api/projects", json={"name": "Simulation Ready"})
+    pid = r.json()["project_id"]
+    proj_dir = Path(_cfg.PROJECTS_DIR) / pid
+    graph_data = {
+        "directed": True,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [{"type": "Person", "name": "Yang", "id": "Person:Yang"}],
+        "links": [],
+    }
+    chunks_data = [
+        {
+            "chunk_id": "c1",
+            "text": "Yang built ProjectOS.",
+            "source_file": "cv.pdf",
+            "file_type": "cv",
+            "page_num": None,
+            "char_offset": 0,
+        }
+    ]
+    (proj_dir / "graph.json").write_text(_json.dumps(graph_data), encoding="utf-8")
+    (proj_dir / "chunks.json").write_text(_json.dumps(chunks_data), encoding="utf-8")
+
+    mock_result = {
+        "personas": [],
+        "environment": {},
+        "timeline": [],
+        "graph_enhancements": {"nodes": [], "edges": []},
+        "cv_improvements": {},
+        "report": {"answer": "ok"},
+        "applied_graph_changes": {"nodes_added": 0, "edges_added": 0},
+    }
+    with patch(
+        "app.agents.simulation_agent.ProjectSimulationAgent.run",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        r2 = client.post(
+            f"/api/projects/{pid}/simulation",
+            json={"query": "Improve CV", "apply_graph": False, "update_vault": False},
+        )
 
     assert r2.status_code == 200
     assert "task_id" in r2.json()

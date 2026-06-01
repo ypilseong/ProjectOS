@@ -150,7 +150,9 @@ async def get_graph(project_id: str):
         data["edges"] = data.pop("links")
     graph = nx.node_link_graph(data)
     from app.utils.graph_normalization import normalize_graph_entity_types
+    from app.utils.graph_restructure import build_entity_details
     graph, _ = normalize_graph_entity_types(graph)
+    graph, _ = build_entity_details(graph)
     normalized = nx.node_link_data(graph)
     if "edges" in normalized and "links" not in normalized:
         normalized["links"] = normalized.pop("edges")
@@ -386,10 +388,20 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
                     f"merged {post_reextract_llm_merged} node(s)"
                 )
 
-        from app.utils.graph_restructure import add_category_hubs
+        from app.utils.graph_restructure import (
+            add_category_hubs,
+            build_entity_details,
+            demote_project_context_nodes,
+        )
+        graph, context_demoted = demote_project_context_nodes(graph)
+        if context_demoted:
+            logger.info(f"Project context nodes demoted: {context_demoted}")
         graph, hubs_added = add_category_hubs(graph)
         if hubs_added:
             logger.info(f"Category hubs added: {hubs_added}")
+        graph, details_added = build_entity_details(graph)
+        if details_added:
+            logger.info(f"Entity details generated: {details_added}")
 
         graph_agent.save(graph, graph_path)
         hash_store.save()

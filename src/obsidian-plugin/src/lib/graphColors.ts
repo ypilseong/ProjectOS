@@ -1,6 +1,12 @@
 import { App, TFile } from "obsidian";
 
-import { GENERATED_FOLDERS, buildVaultSyncPlan, type VaultPayload } from "./vaultSync";
+import {
+  GENERATED_FOLDERS,
+  buildVaultSyncPlan,
+  isSafeGeneratedProjectFolder,
+  joinVaultPath,
+  type VaultPayload,
+} from "./vaultSync";
 import { buildColorGroups, GRAPH_COLOR_GROUPS } from "./graphColorGroups";
 
 export { GRAPH_COLOR_GROUPS, buildColorGroups } from "./graphColorGroups";
@@ -44,14 +50,21 @@ async function ensureGraphColorGroups(app: App): Promise<void> {
 
 async function clearGenerated(app: App, targetFolder: string): Promise<void> {
   for (const folder of GENERATED_FOLDERS) {
-    const path = [targetFolder, folder]
-      .map((part) => part.trim().replace(/^\/+|\/+$/g, ""))
-      .filter(Boolean)
-      .join("/");
+    const path = joinVaultPath(targetFolder, folder);
     if (await app.vault.adapter.exists(path)) {
       await app.vault.adapter.rmdir(path, true);
     }
   }
+}
+
+export async function deleteProjectFolderFromVault(app: App, targetFolder: string): Promise<boolean> {
+  const path = joinVaultPath(targetFolder);
+  if (!isSafeGeneratedProjectFolder(path)) {
+    throw new Error(`Refusing to delete unsafe ProjectOS folder: ${targetFolder}`);
+  }
+  if (!(await app.vault.adapter.exists(path))) return false;
+  await app.vault.adapter.rmdir(path, true);
+  return true;
 }
 
 export async function writePayloadToVault(

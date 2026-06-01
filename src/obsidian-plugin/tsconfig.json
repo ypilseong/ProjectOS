@@ -11,7 +11,7 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "verbatimModuleSyntax": false,
+    "verbatimModuleSyntax": true,
     "types": ["svelte"]
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]

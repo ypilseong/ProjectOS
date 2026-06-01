@@ -1,10 +1,66 @@
 # Claude Code Handoff
 
-Last updated: 2026-05-31
+Last updated: 2026-06-01
 
 ## Current Objective
 
 LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현이 백엔드/export/plugin scaffold까지 진행됨. ProjectOS는 UI에서 local/Claude/Claude task graph build 설정을 전환할 수 있음. vault wiki/index/log/provenance를 QueryAgent와 Health에 활용함.
+
+## Completed In This Session (2026-06-01 Panel Nav Redesign + Simulation Timeline)
+
+사용자 피드백: 기존 redesign이 (1) 동적 요소가 없어 재미없고 (2) 7개 섹션이 한 화면에 모두 쌓여 복잡함. 시뮬레이션 타임라인의 라운드 구분이 불명확하고 `agent + 숫자` 조합이 이해하기 어려움.
+
+- **패널 네비게이션** (`src/obsidian-plugin/src/App.svelte`, `styles.css`)
+  - 7개 섹션 세로 stack → 상단 아이콘 탭 네비게이션으로 변경 (사용자 선택)
+  - 한 번에 한 섹션만 렌더링, 탭 전환 시 fade transition
+  - 각 탭에 인라인 SVG 아이콘 + 짧은 라벨, active 상태 accent 강조
+  - 동적 요소: 카드 hover lift(border accent + shadow), nav hover/active 트랜지션
+- **시뮬레이션 타임라인** (`src/obsidian-plugin/src/sections/SimulationSection.svelte`, `styles.css`)
+  - 라운드별 색상 구분: 8색 팔레트, 라운드 헤더 pill + 좌측 컬러 바 + 카드 배경 틴트
+  - 타임라인을 `round` 기준으로 그룹화(`roundGroups`)
+  - `Round N · agent_id` 조합 제거 → agent의 **실제 이름**(persona.name) 버튼 표시
+  - agent 이름 클릭 시 해당 persona의 role + goals/knowledge가 인라인 slide로 펼쳐짐 (`openItems` Set 토글)
+  - persona 매칭 안 되면 버튼 disabled
+
+### 검증
+
+- `cd src/obsidian-plugin && npm run build` → success
+- `npm test` → `8 passed`
+- 번들을 `src/backend/vault/.obsidian/plugins/projectos-vault-sync/`에 동기화
+- **시각 확인 불가**: 이 서버(dgx02)는 GTK/브라우저 미설치로 Obsidian 실행 불가. 최종 확인은 macOS Obsidian에서 플러그인 reload 후 사용자가 직접 수행 필요.
+
+### User Action
+
+- Obsidian에서 ProjectOS 플러그인 disable/enable 또는 Obsidian reload로 갱신된 `main.js`/`styles.css` 로드
+
+## Completed In This Session (2026-06-01 Obsidian Plugin Blank Panel Fix)
+
+- Diagnosed Obsidian ProjectOS plugin blank panel using the in-app fallback error display.
+- Root cause: `src/obsidian-plugin/src/store/appStore.svelte.ts` used Svelte 5 runes (`$state`) in a plain TypeScript module that was bundled without rune transformation. Obsidian therefore raised `ReferenceError: $state is not defined`.
+- Fixed `AppStore` by replacing rune fields with a `createSubscriber`-based reactive class:
+  - `status`, `task`, `projects`, `backendSettings`, `runtimeDirty`, `analysis`, `simulation`, `simulationLive`, and `answer` now use explicit getters/setters.
+  - Svelte components still update reactively without relying on global `$state`.
+- Added a view-level fallback in `src/obsidian-plugin/src/main.ts`:
+  - render failures now show an error panel and Retry button instead of a blank Obsidian view.
+- Hardened plugin layout CSS in `src/obsidian-plugin/styles.css`:
+  - long project names, IDs, status text, pills, buttons, and error stacks wrap inside their containers.
+- Cleaned Svelte build warnings:
+  - `verbatimModuleSyntax=true` in `src/obsidian-plugin/tsconfig.json`
+  - Runtime section labels connected to controls
+  - local state initialization warnings removed in ProjectSection, Disclosure, and Tabs.
+- Rebuilt and installed the updated plugin bundle into `src/backend/vault/.obsidian/plugins/projectos-vault-sync/`.
+- Verified the installed plugin bundle no longer contains unresolved `$state`, `$derived`, `$effect`, or `$props` tokens.
+
+### Verification
+
+- `cd src/obsidian-plugin && npm run build` -> success
+- `cd src/obsidian-plugin && npm test` -> `8 passed`
+- `http://172.16.229.33:8002/health` -> OK
+- Backend OpenAPI includes `/api/projects/{project_id}/simulation`
+
+### User Action
+
+- In Obsidian, disable/enable the ProjectOS plugin or reload Obsidian so it loads the updated `main.js`.
 
 ## 다음 작업 후보
 
@@ -1201,3 +1257,43 @@ LLM_MODEL=claude-sonnet-4-6
 - Vite build warns about a large JS chunk; no functional failure.
 - Incremental graph build currently loads the existing graph but still iterates all chunks; this can revisit older chunks. Fuzzy dedup reduces duplicate nodes, but relation extraction can still add repeated edges if relation identity differs.
 - Current runtime cannot proceed past ontology generation until `LLM_BASE_URL` points to a reachable OpenAI-compatible server. If that server is OpenAI, a real `LLM_API_KEY` is required; if it is a local server, the key may remain empty.
+
+## Completed In This Session (2026-06-01 Graph Detail + Obsidian Project Delete)
+
+- Graph/detail role split:
+  - `graph_restructure.py` now promotes independent primary entities under category hubs even when they only appeared through semantic links such as `Project -> Skill`.
+  - Project context leaves that look like implementation details/features can be demoted into project `context_items` instead of remaining graph nodes.
+  - `build_entity_details()` creates type-specific structured `details.sections` for primary entities.
+  - Graph API runs context demotion, category hub creation, and detail generation before saving.
+  - `GET /graph` also backfills details for existing graphs returned to the frontend.
+- Obsidian entity page rendering:
+  - `ObsidianWriterAgent.build_payload()` now ensures details are generated before notes are rendered.
+  - Notes render `## Details` before `## Sources`.
+  - Sources in generated markdown now show file names only; chunk IDs remain in graph JSON provenance but are not rendered in pages.
+- Obsidian plugin project management:
+  - Project delete button added to the Project tab.
+  - Delete calls backend `DELETE /api/projects/{id}` and clears selected project settings when applicable.
+  - Delete now also removes the local Obsidian sync folder for that project:
+    - selected project with explicit `targetFolder` deletes that explicit folder
+    - non-selected projects delete `ProjectOS/{project name}`
+    - unsafe paths such as empty paths, `.obsidian`, or paths containing `..` are rejected
+  - Collect flow now runs `upload(parse) -> ontology -> graph`; previous `upload -> graph` failed on new projects because `ontology.json` did not exist.
+- Live verification on project `0ceaa5b9` / `KAIST CV`:
+  - Initial graph run failed as expected before the Collect fix: missing `projects/0ceaa5b9/ontology.json`.
+  - Manual recovery run completed:
+    - ontology task `37e0d019-5d32-442c-ab37-dbfa4f488a06`: completed, 9 entity types
+    - graph task `35aa0b13-b3a1-4c9c-a7d3-e50cb8336a84`: completed, 120 nodes / 162 edges
+  - Applied latest writer/detail post-processing to the completed graph without rerunning LLM extraction:
+    - 112 entity pages contain `## Details`
+    - generated markdown contains 0 `Chunks:` lines
+    - graph health: isolated `0`, components `1`, graph/vault mismatch `0`
+    - remaining health notes: duplicate candidate `AI-Based Simulation` vs `Agent-Based Simulation`; duplicate page label for `master's program`
+- Verification:
+  - `cd src/backend && pytest tests/test_agents/test_obsidian_writer_agent.py tests/test_api/test_projects_api.py tests/test_utils/test_graph_restructure.py` -> `53 passed`
+  - `cd src/backend && pytest tests/test_agents/test_graph_builder_agent.py tests/test_agents/test_claude_task_graph_builder_agent.py tests/test_api/test_projects_api.py` -> `40 passed`
+  - `cd src/backend && pytest tests/test_utils/test_graph_health.py tests/test_utils/test_isolated_reextract.py` -> `19 passed`
+  - `cd src/frontend && npm run build` -> success; large chunk warning remains
+  - `cd src/obsidian-plugin && npm test` -> `11 passed`
+  - `cd src/obsidian-plugin && npm run build` -> success
+- Runtime note:
+  - The currently running backend on port `8002` did not include the latest backend source changes during the first live run. Restart backend before relying on future graph builds to apply detail/source changes automatically.

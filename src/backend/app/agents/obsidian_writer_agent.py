@@ -26,6 +26,20 @@ TYPE_TO_FOLDER = {
     "Institution": "Institutions",
 }
 
+TYPE_COLORS = {
+    "Person": {"canvas": "#4895ef", "graph": 0x4895EF},
+    "Project": {"canvas": "#2a9d8f", "graph": 0x2A9D8F},
+    "Skill": {"canvas": "#f4a261", "graph": 0xF4A261},
+    "Organization": {"canvas": "#9b5de5", "graph": 0x9B5DE5},
+    "Publication": {"canvas": "#e76f51", "graph": 0xE76F51},
+    "Role": {"canvas": "#00b4d8", "graph": 0x00B4D8},
+    "Achievement": {"canvas": "#f9c74f", "graph": 0xF9C74F},
+    "Event": {"canvas": "#90be6d", "graph": 0x90BE6D},
+    "Institution": {"canvas": "#f72585", "graph": 0xF72585},
+    "Category": {"canvas": "#8d99ae", "graph": 0x8D99AE},
+    "Unknown": {"canvas": "#adb5bd", "graph": 0xADB5BD},
+}
+
 
 def _safe_filename(name: str) -> str:
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip()
@@ -42,6 +56,11 @@ class ObsidianWriterAgent:
         project_id: str | None = None,
         delta: bool = False,
     ) -> VaultPayload:
+        from app.utils.graph_restructure import build_entity_details, demote_project_context_nodes
+
+        graph, _ = demote_project_context_nodes(graph)
+        graph, _ = build_entity_details(graph)
+
         profile_map = {p.name: p for p in (profiles or [])}
         notes: list[VaultNote] = []
         changed_pages: list[str] = []
@@ -145,13 +164,12 @@ class ObsidianWriterAgent:
         )
         graph_config = {
             "colorGroups": [
-                {"query": f"tag:#{t.lower()}", "color": {"a": 1, "rgb": c}}
-                for t, c in [
-                    ("person", 4756697),
-                    ("project", 6008155),
-                    ("skill", 15246392),
-                    ("organization", 10180278),
-                ]
+                {
+                    "query": f"tag:#{entity_type.lower()}",
+                    "color": {"a": 1, "rgb": colors["graph"]},
+                }
+                for entity_type, colors in TYPE_COLORS.items()
+                if entity_type != "Unknown"
             ]
         }
         (obsidian_dir / "graph.json").write_text(
@@ -202,7 +220,6 @@ class ObsidianWriterAgent:
         ntype = data.get("type", "Unknown")
         desc = data.get("description", "")
         sources = data.get("source_files", [])
-        source_chunk_ids = data.get("source_chunk_ids", [])
         today = date.today().isoformat()
 
         lines = [
@@ -219,9 +236,25 @@ class ObsidianWriterAgent:
             "## Overview",
             desc or "(설명 없음)",
             "",
+        ]
+
+        detail_sections = (data.get("details") or {}).get("sections", [])
+        if detail_sections:
+            lines.append("## Details")
+            lines.append("")
+            for section in detail_sections:
+                title = section.get("title", "")
+                items = section.get("items", [])
+                if not title or not items:
+                    continue
+                lines.append(f"### {title}")
+                for item in items:
+                    lines.append(f"- {item}")
+                lines.append("")
+
+        lines += [
             "## Sources",
-            f"- Files: {', '.join(sources) if sources else '(none)'}",
-            f"- Chunks: {', '.join(source_chunk_ids) if source_chunk_ids else '(none)'}",
+            f"- {', '.join(sources) if sources else '(none)'}",
             "",
         ]
 
@@ -265,16 +298,18 @@ class ObsidianWriterAgent:
         edges_canvas = []
 
         for i, node_id in enumerate(graph.nodes):
+            node_type = graph.nodes[node_id].get("type", "Unknown")
             x = float((i % 10) * 250)
             y = float((i // 10) * 200)
             nodes_canvas.append({
                 "id": re.sub(r'[^a-zA-Z0-9_-]', '_', node_id),
                 "type": "text",
                 "text": graph.nodes[node_id].get("name", node_id),
+                "color": TYPE_COLORS.get(node_type, TYPE_COLORS["Unknown"])["canvas"],
                 "x": x,
                 "y": y,
-                "width": 320 if graph.nodes[node_id].get("type") == "Person" else 200,
-                "height": 120 if graph.nodes[node_id].get("type") == "Person" else 60,
+                "width": 320 if node_type == "Person" else 200,
+                "height": 120 if node_type == "Person" else 60,
             })
 
         for u, v, data in graph.edges(data=True):

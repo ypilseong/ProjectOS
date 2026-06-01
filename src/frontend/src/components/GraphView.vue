@@ -51,6 +51,18 @@
             >{{ n.name }}</el-tag>
           </div>
         </div>
+        <div v-if="detailSections.length" class="detail-sections">
+          <div
+            v-for="section in detailSections"
+            :key="section.title"
+            class="detail-section"
+          >
+            <div class="section-label">{{ section.title }}</div>
+            <ul class="detail-list">
+              <li v-for="item in section.items" :key="item">{{ item }}</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -73,6 +85,11 @@ const selectedNode = ref(null)
 const connectedNodes = ref([])
 const visibleTypes = ref([])
 let simulation = null
+
+const detailSections = computed(() => {
+  const sections = selectedNode.value?.details?.sections || []
+  return sections.filter(section => section?.title && section?.items?.length)
+})
 
 const NODE_COLORS = {
   Person: '#4A90D9',
@@ -335,4 +352,7 @@ onUnmounted(() => {
 .section-label { font-size: 12px; color: #999; margin-bottom: 6px; }
 .connected-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .conn-tag { margin: 2px; }
+.detail-sections { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.detail-list { margin: 0; padding-left: 18px; color: #303133; font-size: 13px; line-height: 1.5; }
+.detail-list li { margin: 3px 0; overflow-wrap: anywhere; }
 </style>

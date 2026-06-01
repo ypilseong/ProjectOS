@@ -35,11 +35,42 @@ export interface VaultSyncPlan {
   noteCount: number;
 }
 
+export interface ProjectFolderSettings {
+  projectId: string;
+  projectName: string;
+  targetFolder: string;
+}
+
 export function joinVaultPath(...parts: string[]): string {
   return parts
     .map((part) => part.trim().replace(/^\/+|\/+$/g, ""))
     .filter(Boolean)
     .join("/");
+}
+
+export function projectTargetFolder(settings: ProjectFolderSettings): string {
+  const explicit = settings.targetFolder.trim();
+  if (explicit) return joinVaultPath(explicit);
+  const name = settings.projectName.trim() || settings.projectId.trim();
+  return name ? joinVaultPath("ProjectOS", name) : "ProjectOS";
+}
+
+export function deletionTargetFolder(
+  settings: ProjectFolderSettings,
+  projectId: string,
+  projectName: string,
+): string {
+  if (settings.projectId.trim() === projectId.trim()) {
+    return projectTargetFolder(settings);
+  }
+  return joinVaultPath("ProjectOS", projectName.trim() || projectId.trim());
+}
+
+export function isSafeGeneratedProjectFolder(path: string): boolean {
+  const normalized = joinVaultPath(path);
+  if (!normalized || normalized === "." || normalized === "/") return false;
+  if (normalized === ".obsidian" || normalized.startsWith(".obsidian/")) return false;
+  return !normalized.split("/").includes("..");
 }
 
 export function buildVaultSyncPlan(

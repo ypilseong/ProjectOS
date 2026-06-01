@@ -155,6 +155,8 @@ Extraction rules:
 - Examples: "Total GPA 4.35/4.50", "Sanho Scholarship Recipient", "Smart Tourism Big Data Hackathon Encouragement Award" -> Achievement.
 - Tool/model names alone are not Projects. Classify them as Skill unless the text names a concrete project, product, paper, or system.
 - When a project uses a skill/tool/method/model, extract a Project -> Skill relation using USES_SKILL. Examples: "ProjectOS used Vue and NetworkX" -> ProjectOS USES_SKILL Vue, ProjectOS USES_SKILL NetworkX.
+- Keep the graph focused on independent primary entities. Do not create graph entities for project features, outputs, implementation details, or descriptive phrases such as "graph JSON generation", "Obsidian export", "user-centered visualization", "FastAPI backend architecture", or "Vue/D3 frontend implementation".
+- If a descriptive project phrase contains a real skill/tool, extract the skill/tool as its own Skill entity and connect the Project to it with USES_SKILL. Put the descriptive feature/output phrase in the Project description instead of making it a node.
 - Use HAS_ROLE only for Person -> Role when the role is a formal title or academic position.
 - When a person built, led, participated in, or achieved something through a project, also connect the Person to the Project and the Project to its Skills. Do not leave key skills connected only to the Person if a project context is present.
 - Avoid vague generic nouns, broad topics, isolated sentence fragments, and duplicate entities.

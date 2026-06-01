@@ -27,6 +27,10 @@ export class ApiClient {
     });
   }
 
+  async deleteProject(projectId: string): Promise<void> {
+    await this.json<{ ok: boolean }>(`/api/projects/${projectId}`, { method: "DELETE" });
+  }
+
   async getBackendSettings(): Promise<BackendSettings> {
     return mergeBackendSettings(await this.json<Partial<BackendSettings>>("/api/settings"));
   }
@@ -45,7 +49,7 @@ export class ApiClient {
     return this.json<VaultPayload>(`/api/projects/${projectId}/vault/export`);
   }
 
-  async uploadFiles(projectId: string, files: FileList): Promise<void> {
+  async uploadFiles(projectId: string, files: FileList): Promise<{ task_id: string }> {
     const form = new FormData();
     Array.from(files).forEach((file) => form.append("files", file));
     form.append("file_type", "note");
@@ -54,6 +58,11 @@ export class ApiClient {
       body: form,
     });
     if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as { task_id: string };
+  }
+
+  startOntology(projectId: string): Promise<{ task_id: string }> {
+    return this.json<{ task_id: string }>(`/api/projects/${projectId}/ontology`, { method: "POST" });
   }
 
   startGraphBuild(projectId: string): Promise<{ task_id: string }> {

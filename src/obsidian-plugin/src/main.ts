@@ -21,6 +21,7 @@ import {
   mergeBackendSettings,
   parsePositiveInt,
 } from "./lib/runtime";
+import { deleteProjectFolderFromVault } from "./lib/graphColors";
 
 const VIEW_TYPE_PROJECTOS = "projectos-vault-sync-view";
 
@@ -79,11 +80,16 @@ export default class ProjectOSPlugin extends Plugin {
   async setBackendSettings(settings: BackendSettings): Promise<BackendSettings> {
     return this.client.setBackendSettings(settings);
   }
+
+  async deleteProjectFolder(targetFolder: string): Promise<boolean> {
+    return deleteProjectFolderFromVault(this.app, targetFolder);
+  }
 }
 
 class ProjectOSView extends ItemView {
   plugin: ProjectOSPlugin;
   private component: ReturnType<typeof mount> | null = null;
+  private rootEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ProjectOSPlugin) {
     super(leaf);
@@ -99,12 +105,20 @@ class ProjectOSView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    const root = this.containerEl.children[1] as HTMLElement;
+    const root = (this.containerEl.children[1] ?? this.containerEl) as HTMLElement;
+    this.rootEl = root;
     root.empty();
-    const store = new AppStore(this.plugin.client, this.plugin);
-    this.component = mount(App_, { target: root, props: { store, app: this.app } });
-    await store.loadBackendSettings();
-    await store.refreshProjects();
+    root.addClass("projectos-view-root");
+
+    try {
+      const store = new AppStore(this.plugin.client, this.plugin);
+      this.component = mount(App_, { target: root, props: { store, app: this.app } });
+      await store.loadBackendSettings();
+      await store.refreshProjects();
+    } catch (error) {
+      console.error("ProjectOS view failed to open", error);
+      this.renderOpenError(root, error);
+    }
   }
 
   async onClose(): Promise<void> {
@@ -112,6 +126,32 @@ class ProjectOSView extends ItemView {
       unmount(this.component);
       this.component = null;
     }
+  }
+
+  private renderOpenError(root: HTMLElement, error: unknown): void {
+    root.empty();
+    const panel = root.createDiv({ cls: "pos-panel pos-fallback" });
+    panel.createEl("h2", { text: "ProjectOS" });
+    panel.createEl("p", {
+      cls: "pos-error-title",
+      text: "ProjectOS plugin view failed to render.",
+    });
+    panel.createEl("p", {
+      cls: "pos-muted",
+      text: "Open the Obsidian developer console for the full stack trace, or reload this view after updating the plugin files.",
+    });
+
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    panel.createEl("pre", { cls: "pos-error-box", text: message });
+
+    const actions = panel.createDiv({ cls: "pos-actions" });
+    const retry = actions.createEl("button", { cls: "pos-btn pos-btn-primary", text: "Retry" });
+    retry.onclick = () => {
+      this.onOpen().catch((retryError) => {
+        console.error("ProjectOS view retry failed", retryError);
+        if (this.rootEl) this.renderOpenError(this.rootEl, retryError);
+      });
+    };
   }
 }
 

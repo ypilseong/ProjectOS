@@ -49,36 +49,36 @@
       {/each}
     </div>
 
-    <label class="pos-field-label">LLM backend</label>
-    <select class="pos-input" value={store.backendSettings.llm_backend} onchange={(e) => setField("llm_backend", (e.currentTarget as HTMLSelectElement).value)}>
+    <label class="pos-field-label" for="projectos-llm-backend">LLM backend</label>
+    <select id="projectos-llm-backend" class="pos-input" value={store.backendSettings.llm_backend} onchange={(e) => setField("llm_backend", (e.currentTarget as HTMLSelectElement).value)}>
       <option value="local">Local LLM</option>
       <option value="claude_code">Claude Code</option>
     </select>
 
-    <label class="pos-field-label">Graph build mode</label>
-    <select class="pos-input" value={store.backendSettings.graph_build_mode} onchange={(e) => setField("graph_build_mode", (e.currentTarget as HTMLSelectElement).value)}>
+    <label class="pos-field-label" for="projectos-graph-mode">Graph build mode</label>
+    <select id="projectos-graph-mode" class="pos-input" value={store.backendSettings.graph_build_mode} onchange={(e) => setField("graph_build_mode", (e.currentTarget as HTMLSelectElement).value)}>
       <option value="chunk">Chunk extraction</option>
       <option value="claude_task">Claude task mode</option>
     </select>
 
-    <label class="pos-field-label">Chunk extraction backend</label>
-    <select class="pos-input" value={store.backendSettings.graph_extraction_backend} onchange={(e) => setField("graph_extraction_backend", (e.currentTarget as HTMLSelectElement).value)}>
+    <label class="pos-field-label" for="projectos-graph-backend">Chunk extraction backend</label>
+    <select id="projectos-graph-backend" class="pos-input" value={store.backendSettings.graph_extraction_backend} onchange={(e) => setField("graph_extraction_backend", (e.currentTarget as HTMLSelectElement).value)}>
       <option value="local">Local LLM</option>
       <option value="claude_code">Claude Code</option>
     </select>
 
     <div class="pos-field-grid">
       <div>
-        <label class="pos-field-label">Claude Code model</label>
-        <input class="pos-input" type="text" placeholder="claude-haiku-4-5" value={store.backendSettings.claude_code_model} oninput={(e) => setField("claude_code_model", (e.currentTarget as HTMLInputElement).value.trim())} />
+        <label class="pos-field-label" for="projectos-claude-model">Claude Code model</label>
+        <input id="projectos-claude-model" class="pos-input" type="text" placeholder="claude-haiku-4-5" value={store.backendSettings.claude_code_model} oninput={(e) => setField("claude_code_model", (e.currentTarget as HTMLInputElement).value.trim())} />
       </div>
       <div>
-        <label class="pos-field-label">Chunk size</label>
-        <input class="pos-input" type="number" placeholder="500" value={store.backendSettings.chunk_size} oninput={(e) => setField("chunk_size", parsePositiveInt((e.currentTarget as HTMLInputElement).value, DEFAULT_BACKEND_SETTINGS.chunk_size))} />
+        <label class="pos-field-label" for="projectos-chunk-size">Chunk size</label>
+        <input id="projectos-chunk-size" class="pos-input" type="number" placeholder="500" value={store.backendSettings.chunk_size} oninput={(e) => setField("chunk_size", parsePositiveInt((e.currentTarget as HTMLInputElement).value, DEFAULT_BACKEND_SETTINGS.chunk_size))} />
       </div>
       <div>
-        <label class="pos-field-label">Chunk overlap</label>
-        <input class="pos-input" type="number" placeholder="50" value={store.backendSettings.chunk_overlap} oninput={(e) => setField("chunk_overlap", parsePositiveInt((e.currentTarget as HTMLInputElement).value, DEFAULT_BACKEND_SETTINGS.chunk_overlap))} />
+        <label class="pos-field-label" for="projectos-chunk-overlap">Chunk overlap</label>
+        <input id="projectos-chunk-overlap" class="pos-input" type="number" placeholder="50" value={store.backendSettings.chunk_overlap} oninput={(e) => setField("chunk_overlap", parsePositiveInt((e.currentTarget as HTMLInputElement).value, DEFAULT_BACKEND_SETTINGS.chunk_overlap))} />
       </div>
     </div>
 

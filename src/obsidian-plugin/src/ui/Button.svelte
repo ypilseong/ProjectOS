@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   let { variant = "default", disabled = false, onclick, children }: {
-    variant?: "default" | "primary";
+    variant?: "default" | "primary" | "danger";
     disabled?: boolean;
     onclick?: () => void;
     children: Snippet;

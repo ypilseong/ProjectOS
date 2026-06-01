@@ -12,10 +12,27 @@
     if (!projectId || !files || files.length === 0) return;
     store.status = "Uploading...";
     try {
-      await store.client.uploadFiles(projectId, files);
-      const task = await store.client.startGraphBuild(projectId);
-      store.status = "Build started.";
-      store.watch(task.task_id);
+      const parseTask = await store.client.uploadFiles(projectId, files);
+      store.status = "Parsing uploaded files...";
+      store.watch(parseTask.task_id, async () => {
+        store.status = "Building ontology...";
+        try {
+          const ontologyTask = await store.client.startOntology(projectId);
+          store.watch(ontologyTask.task_id, async () => {
+            store.status = "Building graph...";
+            try {
+              const graphTask = await store.client.startGraphBuild(projectId);
+              store.watch(graphTask.task_id);
+            } catch (graphError) {
+              store.status = "Graph build failed.";
+              new Notice(`ProjectOS graph build failed: ${String(graphError)}`);
+            }
+          });
+        } catch (ontologyError) {
+          store.status = "Ontology build failed.";
+          new Notice(`ProjectOS ontology failed: ${String(ontologyError)}`);
+        }
+      });
     } catch (error) {
       store.status = "Upload/build failed.";
       new Notice(`ProjectOS build failed: ${String(error)}`);
@@ -23,7 +40,7 @@
   }
 </script>
 
-<Card title="Collect" subtitle="Upload files and start graph build.">
+<Card title="Collect" subtitle="Upload files and build ontology and graph.">
   <input
     class="pos-file"
     type="file"

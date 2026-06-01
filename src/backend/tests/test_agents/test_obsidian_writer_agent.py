@@ -94,7 +94,7 @@ def test_note_has_frontmatter(tmp_path, sample_graph, sample_profile):
     assert 'name: "Yang Pilseong"' in content
 
 
-def test_note_has_source_provenance_section(tmp_path, sample_graph):
+def test_note_sources_show_file_names_only(tmp_path, sample_graph):
     from app.agents.obsidian_writer_agent import ObsidianWriterAgent
 
     sample_graph.nodes["Person:Yang Pilseong"]["source_chunk_ids"] = ["chunk-1"]
@@ -104,7 +104,56 @@ def test_note_has_source_provenance_section(tmp_path, sample_graph):
     content = (tmp_path / "Career" / "Yang Pilseong.md").read_text()
     assert "## Sources" in content
     assert "cv.pdf" in content
-    assert "chunk-1" in content
+    assert "chunk-1" not in content
+    assert "Chunks:" not in content
+    assert "Files:" not in content
+
+
+def test_note_renders_structured_entity_details(tmp_path, sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    sample_graph.nodes["Project:ProjectOS"]["details"] = {
+        "type": "Project",
+        "sections": [
+            {"title": "사용 기술", "items": ["Python (USES_SKILL)"]},
+            {"title": "주요 기능", "items": ["graph JSON generation"]},
+        ],
+    }
+    writer = ObsidianWriterAgent()
+    writer.run(sample_graph, vault_path=str(tmp_path))
+
+    content = (tmp_path / "Projects" / "ProjectOS.md").read_text(encoding="utf-8")
+    assert "## Details" in content
+    assert "### 사용 기술" in content
+    assert "- Python (USES_SKILL)" in content
+    assert "- graph JSON generation" in content
+
+
+def test_note_places_details_before_sources(tmp_path, sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    sample_graph.nodes["Project:ProjectOS"]["details"] = {
+        "type": "Project",
+        "sections": [{"title": "사용 기술", "items": ["Python"]}],
+    }
+    writer = ObsidianWriterAgent()
+    writer.run(sample_graph, vault_path=str(tmp_path))
+
+    content = (tmp_path / "Projects" / "ProjectOS.md").read_text(encoding="utf-8")
+    assert content.index("## Details") < content.index("## Sources")
+
+
+def test_build_payload_generates_note_details_from_graph_relations(sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    sample_graph.add_edge("Project:ProjectOS", "Skill:Python", relation="USES_SKILL")
+
+    payload = ObsidianWriterAgent().build_payload(sample_graph)
+    project_note = next(note for note in payload.notes if note.filename == "ProjectOS.md")
+
+    assert "## Details" in project_note.content
+    assert "### 사용 기술" in project_note.content
+    assert "Python (USES_SKILL)" in project_note.content
 
 
 def test_note_has_wikilinks(tmp_path, sample_graph, sample_profile):
@@ -218,6 +267,39 @@ def test_canvas_makes_person_nodes_larger(tmp_path, sample_graph):
 
     assert person["width"] > skill["width"]
     assert person["height"] > skill["height"]
+
+
+def test_canvas_colors_nodes_by_type(tmp_path, sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    writer = ObsidianWriterAgent()
+    writer.run(sample_graph, vault_path=str(tmp_path))
+
+    import json
+
+    canvas = json.loads((tmp_path / "_index.canvas").read_text(encoding="utf-8"))
+    person = next(node for node in canvas["nodes"] if node["text"] == "Yang Pilseong")
+    skill = next(node for node in canvas["nodes"] if node["text"] == "Python")
+    project = next(node for node in canvas["nodes"] if node["text"] == "ProjectOS")
+
+    assert person["color"] != skill["color"]
+    assert skill["color"] != project["color"]
+
+
+def test_graph_config_contains_color_group_for_each_entity_type(tmp_path, sample_graph):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    writer = ObsidianWriterAgent()
+    writer.run(sample_graph, vault_path=str(tmp_path))
+
+    import json
+
+    config = json.loads((tmp_path / ".obsidian" / "graph.json").read_text(encoding="utf-8"))
+    queries = {group["query"] for group in config["colorGroups"]}
+
+    assert "tag:#person" in queries
+    assert "tag:#skill" in queries
+    assert "tag:#institution" in queries
 
 
 def test_writer_appends_log_file(tmp_path, sample_graph):

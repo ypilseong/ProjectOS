@@ -35,6 +35,8 @@ Extraction rules:
 - Certificates and exam names should be Skill when useful, not Achievement.
 - Avoid chunks, pages, sections, vague topics, raw snippets, duplicate entities, and generic nouns.
 - Prefer expanded labels over acronyms when both appear.
+- Keep graph nodes to independent primary entities. Do not create entities for project features, outputs, or implementation phrases such as "graph JSON generation", "Obsidian export", "user-centered visualization", "FastAPI backend architecture", or "Vue/D3 frontend implementation".
+- When such a phrase contains a real skill/tool, extract only the skill/tool as a Skill and connect the Project to it with USES_SKILL.
 
 Allowed entity types and relation types are provided in input.json.
 Output must match schema.json.
