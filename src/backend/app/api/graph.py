@@ -190,6 +190,13 @@ async def get_graph_health(project_id: str):
     return run_health_check(graph, vault_path=str(Path(config.VAULT_DIR) / project_id))
 
 
+@router.get("/{project_id}/traces")
+async def get_traces(project_id: str):
+    from app.utils.trace import read_traces
+
+    return {"traces": read_traces(project_id)}
+
+
 async def _run_ontology(task_id: str, project_id: str):
     from app.utils.logger import reset_log_project, set_log_project
     log_token = set_log_project(project_id)
