@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import projects, graph, chat, tasks, user, settings
+from app.api import projects, graph, chat, tasks, user, settings, skills
 from app.utils.logger import configure_logging
 
 configure_logging()
@@ -27,6 +27,7 @@ app.include_router(graph.router, prefix="/api/projects", tags=["graph"])
 app.include_router(graph.global_router, prefix="/api/graph", tags=["graph"])
 app.include_router(chat.router, prefix="/api/projects", tags=["chat"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 
 
 @app.get("/health")
