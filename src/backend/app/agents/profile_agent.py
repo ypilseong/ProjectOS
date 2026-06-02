@@ -5,6 +5,7 @@ import networkx as nx
 from app.models.graph import CareerProfile
 from app.utils.entity_validation import is_valid_person_name
 from app.utils.llm_client import LLMClient
+from app.utils.routing import Role
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,7 +13,7 @@ logger = get_logger(__name__)
 
 class ProfileAgent:
     def __init__(self):
-        self._llm = LLMClient()
+        self._llm = LLMClient.for_role(Role.PROFILE)
 
     async def run(
         self,

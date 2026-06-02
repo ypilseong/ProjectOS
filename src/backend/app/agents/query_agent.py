@@ -5,6 +5,7 @@ import networkx as nx
 from app.models.graph import TextChunk
 from app.agents.obsidian_writer_agent import TYPE_TO_FOLDER, _safe_filename
 from app.utils.llm_client import LLMClient
+from app.utils.routing import Role
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,7 +13,7 @@ logger = get_logger(__name__)
 
 class QueryAgent:
     def __init__(self):
-        self._llm = LLMClient()
+        self._llm = LLMClient.for_role(Role.QUERY)
 
     async def stream(
         self,

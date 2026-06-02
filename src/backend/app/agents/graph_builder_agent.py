@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Callable
@@ -10,6 +11,7 @@ from app.utils.entity_normalization import clean_entity_name
 from app.utils.entity_resolver import EntityResolver
 from app.utils.entity_validation import is_valid_entity, normalize_entity_type
 from app.utils.llm_client import LLMClient
+from app.utils.routing import Role
 from app.utils.logger import get_logger
 from app.utils.user_config import get_user_name_values, get_user_name_variants, load_user_config
 
@@ -24,8 +26,8 @@ class GraphBuilderAgent:
     def __init__(self):
         # Graph extraction is normally a bulk per-chunk loop, so keep it local.
         # GRAPH_EXTRACTION_BACKEND allows explicit Claude Code E2E quality tests.
-        self._llm = LLMClient(
-            backend=config.GRAPH_EXTRACTION_BACKEND,
+        self._llm = LLMClient.for_role(
+            Role.CHUNK_EXTRACTION,
             disable_plugins=config.CLAUDE_GRAPH_DISABLE_PLUGINS,
         )
         self._fuzzy_threshold = config.FUZZY_MATCH_THRESHOLD
@@ -123,15 +125,39 @@ class GraphBuilderAgent:
 
         total = len(chunks)
         allowed_edge_set = set(edge_types)
-        for i, chunk in enumerate(chunks, start=1):
-            logger.info(f"Processing chunk {i}/{total}")
-            try:
-                result = await self._extract_from_chunk(chunk, entity_types, edge_types)
+        workers = max(1, int(config.GRAPH_BUILD_WORKERS or 1))
+        if workers == 1 or total <= 1:
+            for i, chunk in enumerate(chunks, start=1):
+                logger.info(f"Processing chunk {i}/{total}")
+                try:
+                    result = await self._extract_from_chunk(chunk, entity_types, edge_types)
+                    await self._merge_into_graph(graph, result, chunk, allowed_edge_set)
+                except Exception as e:
+                    logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+                if progress_callback:
+                    progress_callback(i, total)
+            return graph
+
+        results: list[dict | None] = [None] * total
+        completed = 0
+        semaphore = asyncio.Semaphore(workers)
+
+        async def extract_one(index: int, chunk: TextChunk) -> None:
+            nonlocal completed
+            async with semaphore:
+                logger.info(f"Processing chunk {index + 1}/{total}")
+                try:
+                    results[index] = await self._extract_from_chunk(chunk, entity_types, edge_types)
+                except Exception as e:
+                    logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total)
+
+        await asyncio.gather(*(extract_one(index, chunk) for index, chunk in enumerate(chunks)))
+        for chunk, result in zip(chunks, results):
+            if result is not None:
                 await self._merge_into_graph(graph, result, chunk, allowed_edge_set)
-            except Exception as e:
-                logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
-            if progress_callback:
-                progress_callback(i, total)
 
         return graph
 

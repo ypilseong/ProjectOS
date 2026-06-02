@@ -8,6 +8,7 @@ import networkx as nx
 from app.config import config
 from app.utils.entity_normalization import are_acronym_variants
 from app.utils.logger import get_logger
+from app.utils.routing import Role
 from app.utils.semantic_dedup import _merge_node
 
 logger = get_logger(__name__)
@@ -95,7 +96,7 @@ async def llm_dedup(graph: nx.DiGraph, llm_client=None) -> tuple[nx.DiGraph, int
         from app.utils.llm_client import LLMClient
         # Graph extraction stays local, but graph maintenance follows the
         # configured backend so higher-quality models can judge merge decisions.
-        llm_client = LLMClient()
+        llm_client = LLMClient.for_role(Role.DEDUP)
 
     candidates = _find_candidate_pairs(graph, _LOW, config.FUZZY_MATCH_THRESHOLD)
     if not candidates:

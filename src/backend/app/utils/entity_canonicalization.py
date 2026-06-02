@@ -7,6 +7,7 @@ from typing import Any
 import networkx as nx
 
 from app.utils.logger import get_logger
+from app.utils.routing import Role
 from app.utils.semantic_dedup import _merge_node
 
 logger = get_logger(__name__)
@@ -32,7 +33,7 @@ async def canonicalize_entity_names(graph: nx.DiGraph, llm_client=None) -> tuple
 
     if llm_client is None:
         from app.utils.llm_client import LLMClient
-        llm_client = LLMClient()
+        llm_client = LLMClient.for_role(Role.CANONICAL)
 
     changed = 0
     for start in range(0, len(items), _BATCH_SIZE):

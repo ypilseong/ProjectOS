@@ -5,6 +5,7 @@ import networkx as nx
 
 from app.models.graph import TextChunk
 from app.utils.llm_client import LLMClient
+from app.utils.routing import Role
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +16,7 @@ _MAX_DRAFT_CHARS = 4000
 
 class AnalysisAgent:
     def __init__(self):
-        self._llm = LLMClient()
+        self._llm = LLMClient.for_role(Role.ANALYSIS)
 
     async def run(self, chunks: list[TextChunk], graph: nx.DiGraph | None = None) -> dict:
         if not chunks:

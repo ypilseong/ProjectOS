@@ -7,6 +7,7 @@ import networkx as nx
 
 from app.utils.entity_validation import normalize_entity_type
 from app.utils.logger import get_logger
+from app.utils.routing import Role
 from app.utils.semantic_dedup import _merge_node
 
 logger = get_logger(__name__)
@@ -36,7 +37,7 @@ async def refine_achievement_nodes(graph: nx.DiGraph, llm_client=None) -> tuple[
         from app.utils.llm_client import LLMClient
         # This is a small graph-maintenance pass, so use the configured backend
         # instead of the local-only bulk extraction backend.
-        llm_client = LLMClient()
+        llm_client = LLMClient.for_role(Role.REFINEMENT)
 
     changed = 0
     for start in range(0, len(items), _BATCH_SIZE):

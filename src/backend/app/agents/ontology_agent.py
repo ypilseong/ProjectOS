@@ -1,5 +1,6 @@
 from app.models.graph import TextChunk, Ontology, EntityTypeDef, EdgeTypeDef
 from app.utils.llm_client import LLMClient
+from app.utils.routing import Role
 from app.config import config
 from app.utils.logger import get_logger
 
@@ -18,7 +19,7 @@ class OntologyAgent:
     ]
 
     def __init__(self):
-        self._llm = LLMClient()
+        self._llm = LLMClient.for_role(Role.ONTOLOGY)
 
     async def run(self, chunks: list[TextChunk]) -> Ontology:
         sample = self._build_sample(chunks)
