@@ -6,6 +6,7 @@ class Config(BaseSettings):
     LLM_BACKEND: str = "local"  # "local" | "claude_code"
     GRAPH_EXTRACTION_BACKEND: str = "local"  # "local" | "claude_code"
     GRAPH_BUILD_MODE: str = "chunk"  # "chunk" | "claude_task"
+    GRAPH_BUILD_WORKERS: int = 2
     CLAUDE_CODE_MODEL: str = ""
     CLAUDE_TASKS_DIR: str = "/tmp/projectos-claude-tasks"
     CLAUDE_TASK_BARE: bool = False
@@ -22,6 +23,7 @@ class Config(BaseSettings):
     LLM_PRESENCE_PENALTY: float = 1.5
     LLM_REPETITION_PENALTY: float = 1.0
     LLM_THINKING_MODE: bool = True
+    LLM_BUDGET_USD: float = 0.0  # 0 = unlimited; Claude 누적 비용이 이 값을 넘으면 local로 강등
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
     FUZZY_MATCH_THRESHOLD: float = 0.85
