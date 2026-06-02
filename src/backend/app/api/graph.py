@@ -236,6 +236,11 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
         from app.models.graph import EdgeTypeDef, EntityTypeDef, Ontology, TextChunk
 
         task_manager.update(task_id, status=TaskStatus.RUNNING, message="그래프 구축 시작", progress=10)
+        from app.utils.llm_client import get_llm_usage
+        from app.utils.trace import record_trace
+        from app.utils.routing import Role, route
+
+        usage_before = get_llm_usage().get("total_cost_usd", 0.0)
         proj_dir = Path(config.PROJECTS_DIR) / project_id
         chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
@@ -439,6 +444,16 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             project.status = ProjectStatus.READY
             project.stats = dataclasses.asdict(stats)
             project_store.save(project)
+        cost_delta = get_llm_usage().get("total_cost_usd", 0.0) - usage_before
+        record_trace(
+            project_id,
+            "graph_build",
+            backend=route(Role.CHUNK_EXTRACTION),
+            incremental=incremental,
+            nodes=stats.total_nodes,
+            edges=stats.total_edges,
+            cost_usd=round(cost_delta, 6),
+        )
         task_manager.update(
             task_id,
             status=TaskStatus.COMPLETED,
