@@ -1,7 +1,7 @@
 from app.models.graph import TextChunk, Ontology, EntityTypeDef, EdgeTypeDef
+from app.config import config
 from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
-from app.config import config
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)

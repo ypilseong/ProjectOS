@@ -4,7 +4,7 @@ from app.utils.routing import Role
 
 def _spy_for_role(monkeypatch):
     calls = []
-    orig = lc.LLMClient.for_role.__func__
+    orig = lc.LLMClient.for_role.__func__  # .__func__ unwraps the classmethod so we can wrap and re-bind it
 
     def spy(cls, role, disable_plugins=False):
         calls.append(role)
@@ -36,3 +36,19 @@ def test_query_agent_uses_query_role(monkeypatch):
 
     QueryAgent()
     assert Role.QUERY in calls
+
+
+def test_analysis_agent_uses_analysis_role(monkeypatch):
+    calls = _spy_for_role(monkeypatch)
+    from app.agents.analysis_agent import AnalysisAgent
+
+    AnalysisAgent()
+    assert Role.ANALYSIS in calls
+
+
+def test_profile_agent_uses_profile_role(monkeypatch):
+    calls = _spy_for_role(monkeypatch)
+    from app.agents.profile_agent import ProfileAgent
+
+    ProfileAgent()
+    assert Role.PROFILE in calls
