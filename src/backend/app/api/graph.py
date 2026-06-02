@@ -451,16 +451,19 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
             project.status = ProjectStatus.READY
             project.stats = dataclasses.asdict(stats)
             project_store.save(project)
-        cost_delta = get_llm_usage().get("total_cost_usd", 0.0) - usage_before
-        record_trace(
-            project_id,
-            "graph_build",
-            backend=route(Role.CHUNK_EXTRACTION),
-            incremental=incremental,
-            nodes=stats.total_nodes,
-            edges=stats.total_edges,
-            cost_usd=round(cost_delta, 6),
-        )
+        try:
+            cost_delta = get_llm_usage().get("total_cost_usd", 0.0) - usage_before
+            record_trace(
+                project_id,
+                "graph_build",
+                backend=route(Role.CHUNK_EXTRACTION),
+                incremental=incremental,
+                nodes=stats.total_nodes,
+                edges=stats.total_edges,
+                cost_usd=round(cost_delta, 6),
+            )
+        except Exception:
+            pass  # trace is best-effort; never fail a successful build on logging
         task_manager.update(
             task_id,
             status=TaskStatus.COMPLETED,
