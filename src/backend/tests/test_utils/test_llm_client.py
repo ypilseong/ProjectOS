@@ -204,3 +204,17 @@ async def test_claude_chat_can_disable_user_plugins(monkeypatch):
     assert "--setting-sources" in calls[0]
     assert "project,local" in calls[0]
     assert "--disable-slash-commands" in calls[0]
+
+
+def test_for_role_local(monkeypatch):
+    from app.utils import llm_client as lc
+    monkeypatch.setattr("app.utils.routing.route", lambda role: "local")
+    client = lc.LLMClient.for_role("anything")
+    assert isinstance(client._impl, lc._OpenAIBackend)
+
+
+def test_for_role_claude(monkeypatch):
+    from app.utils import llm_client as lc
+    monkeypatch.setattr("app.utils.routing.route", lambda role: "claude_code")
+    client = lc.LLMClient.for_role("anything")
+    assert isinstance(client._impl, lc._ClaudeCodeBackend)

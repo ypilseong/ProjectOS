@@ -290,6 +290,12 @@ class LLMClient:
         else:
             self._impl = _OpenAIBackend()
 
+    @classmethod
+    def for_role(cls, role: str, disable_plugins: bool = False) -> "LLMClient":
+        from app.utils.routing import route
+
+        return cls(backend=route(role), disable_plugins=disable_plugins)
+
     async def chat(self, messages: list[dict], **kwargs) -> str:
         return await self._impl.chat(messages, **kwargs)
 
