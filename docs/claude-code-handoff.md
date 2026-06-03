@@ -2,6 +2,24 @@
 
 Last updated: 2026-06-03
 
+## 2026-06-03 Phase 2b — Scheduled Digest Agent
+
+**What:** Deterministic daily digest per built project → `vault/<id>/Digests/YYYY-MM-DD.md`.
+No LLM calls; composed from `run_health_check` + new-node diff (`digest_state.json`) +
+reused `analysis.json`.
+
+**New files:** `app/services/digest.py` (compose/generate/should_run/DigestService),
+`app/api/digest.py` (POST `/api/projects/{id}/digest`, GET `/digests`, GET `/digests/{date}`).
+
+**Config:** `DIGEST_ENABLED=False` (opt-in), `DIGEST_HOUR=7`, `DIGEST_POLL_SECONDS=300`.
+
+**Wiring:** `DigestService` started/stopped in `app/main.py` lifespan alongside `WatcherService`.
+
+**Verification:** `python3 -m pytest tests/ -q` → 302 passed.
+
+**Next candidates:** local-LLM prose synthesis (optional layer), Obsidian plugin "new digest"
+badge (polls the list endpoint), weekly cadence, deleted-node tracking.
+
 ## Completed In This Session (2026-06-03 Phase 1 Foundation + Phase 2a File Watcher)
 
 OpenJarvis 방향성 로드맵의 Phase 1과 Phase 2a를 TDD subagent-driven 방식으로 구현 완료.
