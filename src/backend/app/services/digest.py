@@ -18,6 +18,27 @@ def should_run(now: datetime, last_run_date: date | None, hour: int) -> bool:
     return now.hour >= hour
 
 
+def _read_digest_state(project_id: str) -> dict:
+    state_path = Path(config.PROJECTS_DIR) / project_id / "digest_state.json"
+    if not state_path.exists():
+        return {}
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
+def _read_last_digest_date(project_id: str) -> date | None:
+    raw = _read_digest_state(project_id).get("last_digest_date")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _reinforcement_suggestions(health: dict, analysis: dict) -> list[str]:
     out: list[str] = []
     isolated = health.get("isolated_nodes", [])
@@ -129,15 +150,9 @@ def compose_digest(project_id: str) -> dict | None:
     vault_path = str(Path(config.VAULT_DIR) / project_id)
     health = run_health_check(graph, vault_path=vault_path)
 
-    last_ids: list[str] = []
-    state_path = proj_dir / "digest_state.json"
-    if state_path.exists():
-        try:
-            last_ids = json.loads(state_path.read_text(encoding="utf-8")).get(
-                "last_node_ids", []
-            )
-        except Exception:
-            last_ids = []
+    last_ids = _read_digest_state(project_id).get("last_node_ids", [])
+    if not isinstance(last_ids, list):
+        last_ids = []
 
     current_ids = list(graph.nodes)
     last_set = set(last_ids)
@@ -233,15 +248,31 @@ class DigestService:
                 result.append(proj.name)
         return result
 
-    async def poll_once(self, now: datetime | None = None) -> None:
-        now = now or datetime.now()
-        if not should_run(now, self._last_run_date, config.DIGEST_HOUR):
+    def _seed_last_run_date(self, project_ids: list[str], today: date) -> None:
+        if self._last_run_date is not None or not project_ids:
             return
-        for project_id in self.eligible_projects():
+        last_dates = [_read_last_digest_date(project_id) for project_id in project_ids]
+        if last_dates and all(last_date == today for last_date in last_dates):
+            self._last_run_date = today
+
+    def _run_scheduled_digest_cycle(self, project_ids: list[str], run_date: date) -> None:
+        for project_id in project_ids:
+            if _read_last_digest_date(project_id) == run_date:
+                continue
             try:
                 generate_digest(project_id, trigger="scheduled")
             except Exception as e:
                 logger.error(f"Digest: {project_id} 생성 실패: {e}")
+
+    async def poll_once(self, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        project_ids = self.eligible_projects()
+        self._seed_last_run_date(project_ids, now.date())
+        if not should_run(now, self._last_run_date, config.DIGEST_HOUR):
+            return
+        await asyncio.to_thread(self._run_scheduled_digest_cycle, project_ids, now.date())
+        # The scheduled digest is best-effort: once the cycle has considered every
+        # eligible project, wait until the next local day before trying again.
         self._last_run_date = now.date()
 
     async def _loop(self) -> None:

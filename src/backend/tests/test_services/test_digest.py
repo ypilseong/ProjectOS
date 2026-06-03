@@ -121,6 +121,21 @@ def test_render_markdown_caps_new_nodes():
     assert "... 외 5개" in md
 
 
+def test_render_markdown_caps_analysis_issues_at_five():
+    md = _render_markdown(
+        date_str="2026-06-03",
+        total_nodes=1,
+        total_edges=0,
+        new_node_names=[],
+        isolated=[],
+        missing_source=[],
+        analysis={"issues": [{"description": f"약점{i}"} for i in range(6)]},
+        suggestions=[],
+    )
+    assert "약점4" in md
+    assert "약점5" not in md
+
+
 import json
 
 import networkx as nx
@@ -239,6 +254,24 @@ def test_generate_idempotent_same_day(monkeypatch, tmp_path):
     assert r1["date"] == r2["date"]
 
 
+def test_generate_second_run_diffs_against_written_state(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    vault = tmp_path / "vault"
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(vault))
+    monkeypatch.setattr("app.utils.trace.config.PROJECTS_DIR", str(tmp_path))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill")])
+
+    first = generate_digest("p1")
+    _write_graph(proj, [("n1", "Alpha", "Skill"), ("n2", "Beta", "Project")])
+    second = generate_digest("p1")
+
+    assert first["new_node_names"] == ["Alpha"]
+    assert second["new_node_names"] == ["Beta"]
+    state = json.loads((proj / "digest_state.json").read_text(encoding="utf-8"))
+    assert state["last_node_ids"] == ["n1", "n2"]
+
+
 def test_generate_returns_none_when_no_graph(monkeypatch, tmp_path):
     monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
     monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
@@ -317,6 +350,54 @@ def test_poll_once_continues_after_project_error(monkeypatch, tmp_path):
     svc = DigestService()
     asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 9, 0)))
     assert seen == ["p1", "p2"]  # p2 still processed despite p1 error
+    assert svc._last_run_date == date(2026, 6, 3)
+
+
+def test_poll_once_skips_project_with_state_for_today_after_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.DIGEST_HOUR", 0)
+    for pid in ("p1", "p2"):
+        d = tmp_path / pid
+        d.mkdir()
+        (d / "graph.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "p1" / "digest_state.json").write_text(
+        json.dumps({"last_digest_date": "2026-06-03"}), encoding="utf-8"
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.digest.generate_digest",
+        lambda pid, trigger="scheduled": calls.append((pid, trigger)),
+    )
+
+    svc = DigestService()
+    asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 9, 0)))
+    assert calls == [("p2", "scheduled")]
+
+
+def test_poll_once_seeds_last_run_when_all_projects_have_today_state(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.DIGEST_HOUR", 0)
+    for pid in ("p1", "p2"):
+        d = tmp_path / pid
+        d.mkdir()
+        (d / "graph.json").write_text("{}", encoding="utf-8")
+        (d / "digest_state.json").write_text(
+            json.dumps({"last_digest_date": "2026-06-03"}), encoding="utf-8"
+        )
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.digest.generate_digest",
+        lambda pid, trigger="scheduled": calls.append(pid),
+    )
+
+    svc = DigestService()
+    asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 9, 0)))
+    assert calls == []
+    assert svc._last_run_date == date(2026, 6, 3)
 
 
 def test_start_noop_when_disabled(monkeypatch):
@@ -324,3 +405,17 @@ def test_start_noop_when_disabled(monkeypatch):
     svc = DigestService()
     svc.start()
     assert svc._task is None
+
+
+def test_start_stop_lifecycle_when_enabled(monkeypatch):
+    monkeypatch.setattr("app.services.digest.config.DIGEST_ENABLED", True)
+    monkeypatch.setattr("app.services.digest.config.DIGEST_POLL_SECONDS", 60)
+
+    async def run():
+        svc = DigestService()
+        svc.start()
+        assert svc._task is not None
+        await svc.stop()
+        assert svc._task is None
+
+    asyncio.run(run())

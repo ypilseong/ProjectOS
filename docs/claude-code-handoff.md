@@ -20,15 +20,22 @@ reused `analysis.json`.
 **Next candidates:** local-LLM prose synthesis (optional layer), Obsidian plugin "new digest"
 badge (polls the list endpoint), weekly cadence, deleted-node tracking.
 
+## 2026-06-03 Phase 2b 후속 — Digest 보강 (코드 리뷰 도출, 완료·미커밋)
+
+코드 리뷰의 non-blocking 제안 4건 모두 구현. 검증: `python3 -m pytest src/backend/tests -q` → **307 passed**.
+- **스케줄 dedup 영속화**: scheduled poll이 `digest_state.json.last_digest_date`를 읽어 재시작 후에도 오늘 이미 생성된 프로젝트를 건너뜀(`_read_last_digest_date`, `_seed_last_run_date`). 모든 eligible 프로젝트가 오늘 완료 상태면 `_last_run_date`도 seed.
+- **블로킹 IO 해소**: `poll_once`의 scheduled 생성 루프를 `asyncio.to_thread(_run_scheduled_digest_cycle, ...)`로 이동해 async loop 블로킹 감소.
+- **best-effort 정책 주석**: 한 cycle에서 일부 프로젝트가 실패해도 다음 날까지 재시도하지 않음(의도된 동작)임을 주석화.
+- **테스트 5종 추가**: 2차 실행 diff(`test_generate_second_run_diffs_against_written_state`), analysis issue 5개 cap(`test_render_markdown_caps_analysis_issues_at_five`), 재시작 dedup(`test_poll_once_skips_project_with_state_for_today_after_restart`), all-today seed(`test_poll_once_seeds_last_run_when_all_projects_have_today_state`), start/stop lifecycle(`test_start_stop_lifecycle_when_enabled`).
+
+> ⚠️ **미커밋 상태**: 위 변경(`app/services/digest.py`, `tests/test_services/test_digest.py`)과 본 핸드오프 문서 갱신은 현재 **워킹 트리에만 존재**하며 커밋·`main` 머지·push 되지 않음. Phase 2b 본체(merge `8c9605c`, 302 passed)와 달리 git 히스토리에 없으므로 영속화 필요 → Next Up A 참조.
+
 ## 앞으로 진행할 내용 (Next Up)
 
-작성 시점 2026-06-03. Phase 1/2a/2b 백엔드 구현은 모두 `main`에 머지됨. 다음 작업 우선순위:
+작성 시점 2026-06-03. Phase 1/2a/2b 백엔드 구현 본체는 `main`에 머지됨. 다음 작업 우선순위:
 
-### A. Digest 후속 보강 (코드 리뷰에서 도출, non-blocking)
-- **스케줄 dedup 영속화**: `_last_run_date`가 인메모리라 백엔드 재시작 시 같은 날 재실행됨. 시작 시 `digest_state.json`의 `last_digest_date`를 읽어 seed 하거나 미사용 필드 제거. (`app/services/digest.py:224,245`)
-- **전체 프로젝트 실패 시에도 `_last_run_date`가 설정되는 동작**: best-effort라 허용 가능하나 주석/재시도 정책 검토. (`digest.py:240-245`)
-- **블로킹 파일 IO**: `poll_once`가 async인데 동기 IO 수행. 프로젝트 수 증가 시 `asyncio.to_thread(generate_digest, ...)` 고려.
-- **테스트 갭(minor)**: (a) `generate_digest`가 state를 쓴 뒤의 진짜 2차 실행 diff, (b) analysis issue 5개 cap, (c) `_loop` start/stop 라이프사이클.
+### A. Digest 후속 보강 커밋 (즉시)
+- 워킹 트리의 digest 보강 변경(`app/services/digest.py`, `tests/test_services/test_digest.py`) + 본 문서를 커밋 → `main` 머지 → push. **주의**: 동일 워킹 트리에 무관한 선행 미커밋 변경(`api/projects.py`, `tests/conftest.py`, `test_graph_builder_agent.py`, obsidian-plugin, untracked `test_simulation_agent.py`/`WorkflowStrip.svelte` 등)이 섞여 있으므로 digest 관련 파일만 선별 staging 할 것.
 
 ### B. 수동 검증 (선택)
 - `.env`에 `DIGEST_ENABLED=true`, `DIGEST_HOUR=<현재 시각>` 설정 후 서버 실행 → 빌드 완료 프로젝트에 대해 `vault/<id>/Digests/<오늘>.md` 생성 및 `traces.jsonl`에 `"action":"digest"` 기록 확인.
