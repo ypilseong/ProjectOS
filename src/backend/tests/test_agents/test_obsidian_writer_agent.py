@@ -235,7 +235,7 @@ def test_writer_skips_category_notes(tmp_path, sample_graph):
     assert not (tmp_path / "Misc" / "Skills.md").exists()
 
 
-def test_person_note_expands_category_hub_links_for_obsidian_graph(tmp_path):
+def test_person_note_keeps_category_hub_links_only(tmp_path):
     from app.agents.obsidian_writer_agent import ObsidianWriterAgent
 
     g = nx.DiGraph()
@@ -250,7 +250,7 @@ def test_person_note_expands_category_hub_links_for_obsidian_graph(tmp_path):
 
     content = (tmp_path / "Career" / "Yang Pilseong.md").read_text(encoding="utf-8")
     assert "HAS: [[Skills]]" in content
-    assert "Skills: [[Python]]" in content
+    assert "Skills: [[Python]]" not in content
 
 
 def test_canvas_makes_person_nodes_larger(tmp_path, sample_graph):

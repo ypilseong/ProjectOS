@@ -188,25 +188,6 @@ class ObsidianWriterAgent:
             if graph.nodes[p].get("name")
         ]
 
-        # Obsidian's native Graph View sizes nodes from markdown wikilinks, not
-        # NetworkX edge metadata. Category hubs are useful in the app graph, but
-        # they make the user node look under-connected in Obsidian. Expand
-        # Person -> Category -> Entity into direct note links while preserving
-        # the category graph structure itself.
-        if graph.nodes[node_id].get("type") == "Person":
-            seen = {name for name, _ in successors}
-            for category_id in graph.successors(node_id):
-                if graph.nodes[category_id].get("type") != "Category":
-                    continue
-                category_name = graph.nodes[category_id].get("name", "Category")
-                for target_id in graph.successors(category_id):
-                    target = graph.nodes[target_id]
-                    target_name = target.get("name")
-                    if not target_name or target_name in seen or target.get("type") == "Category":
-                        continue
-                    successors.append((target_name, f"{category_name}"))
-                    seen.add(target_name)
-
         return successors, predecessors
 
     def _render_note(
