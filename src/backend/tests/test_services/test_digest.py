@@ -119,3 +119,76 @@ def test_render_markdown_caps_new_nodes():
         suggestions=[],
     )
     assert "... 외 5개" in md
+
+
+import json
+
+import networkx as nx
+
+from app.services.digest import compose_digest
+
+
+def _write_graph(proj_dir, nodes: list[tuple[str, str, str]], edges=None):
+    """nodes: list of (id, name, type)."""
+    g = nx.DiGraph()
+    for nid, name, ntype in nodes:
+        g.add_node(nid, name=name, type=ntype, source_files=["f.txt"])
+    for a, b in (edges or []):
+        g.add_edge(a, b)
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    (proj_dir / "graph.json").write_text(
+        json.dumps(nx.node_link_data(g), ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_compose_returns_none_when_no_graph(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    (tmp_path / "p1").mkdir()
+    assert compose_digest("p1") is None
+
+
+def test_compose_new_nodes_diff_against_state(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill"), ("n2", "Beta", "Project")],
+                 edges=[("n1", "n2")])
+    (proj / "digest_state.json").write_text(
+        json.dumps({"last_node_ids": ["n1"]}), encoding="utf-8"
+    )
+    result = compose_digest("p1")
+    assert result["new_node_count"] == 1
+    assert result["new_node_names"] == ["Beta"]
+    assert result["current_node_ids"] == ["n1", "n2"]
+
+
+def test_compose_all_new_when_no_state(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill")])
+    result = compose_digest("p1")
+    assert result["new_node_count"] == 1
+    assert "# Digest" in result["markdown"]
+
+
+def test_compose_includes_isolated_warning(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    proj = tmp_path / "p1"
+    # n3 has no edges -> isolated
+    _write_graph(proj, [("n1", "Alpha", "Skill"), ("n2", "Beta", "Project"),
+                        ("n3", "Lonely", "Concept")], edges=[("n1", "n2")])
+    result = compose_digest("p1")
+    assert result["isolated_count"] >= 1
+    assert "Lonely" in result["markdown"]
+
+
+def test_compose_without_analysis_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill")])
+    result = compose_digest("p1")
+    assert "(분석 없음)" in result["markdown"]

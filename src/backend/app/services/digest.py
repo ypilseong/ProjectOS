@@ -115,3 +115,65 @@ def _render_markdown(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def compose_digest(project_id: str) -> dict | None:
+    from app.utils.graph_health import run_health_check
+
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    graph_path = proj_dir / "graph.json"
+    if not graph_path.exists():
+        return None
+    graph = nx.node_link_graph(json.loads(graph_path.read_text(encoding="utf-8")))
+
+    vault_path = str(Path(config.VAULT_DIR) / project_id)
+    health = run_health_check(graph, vault_path=vault_path)
+
+    last_ids: list[str] = []
+    state_path = proj_dir / "digest_state.json"
+    if state_path.exists():
+        try:
+            last_ids = json.loads(state_path.read_text(encoding="utf-8")).get(
+                "last_node_ids", []
+            )
+        except Exception:
+            last_ids = []
+
+    current_ids = list(graph.nodes)
+    last_set = set(last_ids)
+    new_ids = [i for i in current_ids if i not in last_set]
+    new_names = [graph.nodes[i].get("name", str(i)) for i in new_ids]
+
+    analysis: dict = {}
+    analysis_path = proj_dir / "analysis.json"
+    if analysis_path.exists():
+        try:
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        except Exception:
+            analysis = {}
+
+    isolated = health.get("isolated_nodes", [])
+    missing_source = health.get("wiki_graph_lint", {}).get("missing_source_nodes", [])
+    suggestions = _reinforcement_suggestions(health, analysis)
+
+    date_str = date.today().isoformat()
+    markdown = _render_markdown(
+        date_str=date_str,
+        total_nodes=graph.number_of_nodes(),
+        total_edges=graph.number_of_edges(),
+        new_node_names=new_names,
+        isolated=isolated,
+        missing_source=missing_source,
+        analysis=analysis,
+        suggestions=suggestions,
+    )
+
+    return {
+        "date": date_str,
+        "markdown": markdown,
+        "new_node_count": len(new_names),
+        "new_node_names": new_names,
+        "isolated_count": len(isolated),
+        "suggestion_count": len(suggestions),
+        "current_node_ids": current_ids,
+    }
