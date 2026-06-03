@@ -48,9 +48,57 @@ def test_mcp_tools_list_includes_projectos_tools():
     )
 
     names = {tool["name"] for tool in resp.json()["result"]["tools"]}
+    assert "projectos_create_project" in names
     assert "projectos_list_projects" in names
     assert "projectos_query_career_graph" in names
     assert "projectos_generate_digest" in names
+
+
+def test_mcp_create_project_tool_call():
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_create_project",
+                "arguments": {
+                    "name": "Created from MCP",
+                    "description": "Claude Desktop test",
+                },
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    project_id = result["structuredContent"]["project_id"]
+    project = project_store.get(project_id)
+    assert project is not None
+    assert project.name == "Created from MCP"
+    assert project.description == "Claude Desktop test"
+
+
+def test_mcp_create_project_requires_name():
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_create_project",
+                "arguments": {"name": "  "},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "name is required" in result["content"][0]["text"]
 
 
 def test_mcp_list_projects_tool_call():

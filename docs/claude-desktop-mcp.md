@@ -43,6 +43,7 @@ Restart Claude Desktop after editing the config.
 
 ## Exposed Tools
 
+- `projectos_create_project`
 - `projectos_list_projects`
 - `projectos_get_graph_health`
 - `projectos_query_career_graph`

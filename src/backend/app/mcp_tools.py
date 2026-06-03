@@ -32,6 +32,15 @@ def _tool(
 def list_mcp_tools() -> list[dict]:
     return [
         _tool(
+            "projectos_create_project",
+            "Create a new ProjectOS project and return its project_id.",
+            {
+                "name": {"type": "string"},
+                "description": {"type": "string", "default": ""},
+            },
+            ["name"],
+        ),
+        _tool(
             "projectos_list_projects",
             "List ProjectOS projects available as career-memory contexts.",
             {},
@@ -132,6 +141,20 @@ def _load_chunks(project_id: str) -> list[TextChunk]:
 async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
     args = arguments or {}
     try:
+        if name == "projectos_create_project":
+            project_name = str(args["name"]).strip()
+            if not project_name:
+                raise ValueError("name is required")
+            project = project_store.create(
+                name=project_name,
+                description=str(args.get("description") or ""),
+            )
+            payload = project.model_dump(mode="json")
+            return _text_result(
+                json.dumps(payload, ensure_ascii=False),
+                {"project": payload, "project_id": project.project_id},
+            )
+
         if name == "projectos_list_projects":
             projects = [
                 project.model_dump(mode="json")
