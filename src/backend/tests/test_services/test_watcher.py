@@ -74,3 +74,90 @@ def test_replace_chunks_no_duplicates_for_modified_file(monkeypatch, tmp_path):
     assert a_chunks[0]["file_type"] == "resume"
     assert len(b_chunks) == 1
     assert b_chunks[0]["chunk_id"] == "keep"
+
+
+import asyncio
+import hashlib
+
+import pytest
+
+from app.services.watcher import WatcherService
+
+
+def _make_project(tmp_path, pid, files: dict[str, str], built_hashes: dict[str, str]):
+    proj_dir = tmp_path / pid
+    files_dir = proj_dir / "files"
+    files_dir.mkdir(parents=True)
+    for name, content in files.items():
+        (files_dir / name).write_text(content, encoding="utf-8")
+    (proj_dir / "chunks.json").write_text("[]", encoding="utf-8")
+    (proj_dir / "ontology.json").write_text("{}", encoding="utf-8")
+    (proj_dir / "graph.json").write_text("{}", encoding="utf-8")
+    (proj_dir / "hashes.json").write_text(
+        json.dumps(built_hashes), encoding="utf-8"
+    )
+    return proj_dir
+
+
+def test_eligible_projects_only_built(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.watcher.config.PROJECTS_DIR", str(tmp_path))
+    _make_project(tmp_path, "built", {"a.txt": "x"}, {})
+    unbuilt = tmp_path / "unbuilt" / "files"
+    unbuilt.mkdir(parents=True)
+    (tmp_path / "unbuilt" / "chunks.json").write_text("[]", encoding="utf-8")
+
+    svc = WatcherService()
+    assert svc.eligible_projects() == ["built"]
+
+
+def test_poll_once_triggers_update_for_stable_change(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.watcher.config.PROJECTS_DIR", str(tmp_path))
+    content = "hello"
+    h = hashlib.md5(content.encode()).hexdigest()
+    _make_project(tmp_path, "p1", {"a.txt": content}, {})
+
+    svc = WatcherService()
+    svc._prev_hashes["p1"] = {"a.txt": h}
+
+    calls = []
+
+    async def fake_update(project_id, files):
+        calls.append((project_id, set(files)))
+
+    monkeypatch.setattr(svc, "run_auto_update", fake_update)
+    monkeypatch.setattr(
+        "app.services.watcher.task_manager.has_active_build", lambda pid: False
+    )
+
+    asyncio.run(svc.poll_once())
+    assert calls == [("p1", {"a.txt"})]
+
+
+def test_poll_once_skips_when_build_active(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.watcher.config.PROJECTS_DIR", str(tmp_path))
+    content = "hello"
+    h = hashlib.md5(content.encode()).hexdigest()
+    _make_project(tmp_path, "p1", {"a.txt": content}, {})
+
+    svc = WatcherService()
+    svc._prev_hashes["p1"] = {"a.txt": h}
+
+    calls = []
+
+    async def fake_update(project_id, files):
+        calls.append(project_id)
+
+    monkeypatch.setattr(svc, "run_auto_update", fake_update)
+    monkeypatch.setattr(
+        "app.services.watcher.task_manager.has_active_build", lambda pid: True
+    )
+
+    asyncio.run(svc.poll_once())
+    assert calls == []
+
+
+def test_start_noop_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.watcher.config.WATCHER_ENABLED", False)
+    svc = WatcherService()
+    svc.start()
+    assert svc._task is None
