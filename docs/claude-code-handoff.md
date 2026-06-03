@@ -1,10 +1,88 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-01
+Last updated: 2026-06-03
+
+## Completed In This Session (2026-06-03 Phase 1 Foundation + Phase 2a File Watcher)
+
+OpenJarvis 방향성 로드맵의 Phase 1과 Phase 2a를 TDD subagent-driven 방식으로 구현 완료.
+
+### Phase 1 — Constraint-aware routing foundation (branch `phase1-foundation`, 머지 대기)
+- `Role` 클래스 + `route()` 라우팅 정책 + budget guard (누적 비용 ≥ `LLM_BUDGET_USD` 초과 시 `claude_code`→`local` 강등; 0=무제한).
+- `LLMClient.for_role` 팩토리로 역할별 백엔드 선택. 에이전트들을 역할 기반 라우팅으로 마이그레이션.
+- Decision-trace sink: `app/utils/trace.py` `record_trace()` → `PROJECTS_DIR/<id>/traces.jsonl`(JSONL). `GET` traces 엔드포인트.
+- Skills 카탈로그: `app/skills.py` `SkillDescriptor` 6종 + `GET /api/skills`.
+- 정책: `CHUNK_EXTRACTION→GRAPH_EXTRACTION_BACKEND`, `SIMULATION→local`, 나머지→`LLM_BACKEND`. 253 tests passed, READY TO MERGE.
+
+### Phase 2a — Continuous File Watcher (branch `phase2-watcher`, `phase1-foundation` 기반)
+- 스펙: `docs/superpowers/specs/2026-06-02-phase2-file-watcher-design.md`. 계획: `docs/superpowers/plans/2026-06-02-phase2-file-watcher.md`.
+- 해시 폴링 백그라운드 태스크가 빌드 완료 프로젝트의 `files/` 변경을 감지 → 재파싱 → incremental 빌드 자동 트리거. opt-in `WATCHER_ENABLED=False` 기본.
+- 핵심 설계 근거: incremental 빌드는 재파싱을 안 하므로 Watcher가 **빌드 전에 chunks.json을 재파싱·교체**(`reparse_and_replace_chunks`)해야 신규/수정 파일이 반영됨.
+- 구현 (6 commits, `phase1-foundation..phase2-watcher`):
+  - `TaskManager.has_active_build` — 프로젝트별 빌드 중복 방지.
+  - `compute_stable_changes` — 순수 디바운스 함수(변경 AND 직전 폴링 대비 안정).
+  - `reparse_and_replace_chunks` — 변경 파일 재파싱, file_type 보존, 중복 청크 방지.
+  - `_run_graph(trigger="manual")` 파라미터 + graph_build trace에 `trigger` 기록.
+  - `WatcherService` — 감지 IO + 오케스트레이션 + 폴링 루프(`app/services/watcher.py`), config `WATCHER_ENABLED`/`WATCHER_POLL_SECONDS`.
+  - `main.py` lifespan으로 watcher 시작/정지.
+
+### 검증
+- `python3 -m pytest tests/ -q` → **269 passed**.
+- 최종 코드 리뷰: APPROVED_WITH_NITS, 실버그 없음. 디바운스/dedup/예외 격리/청크 교체 모두 정확. nit은 모두 스펙 범위 밖(삭제 처리 미지원=의도된 비목표).
+
+### 다음 판단
+- 브랜치 정리: `phase1-foundation` 머지 → `phase2-watcher` 머지 순서 결정 필요. `phase1-foundation`은 사전 미커밋 작업(GRAPH_BUILD_WORKERS 등)을 함께 담고 있음.
+- 수동 검증(선택): `.env`에 `WATCHER_ENABLED=true` 설정 후 서버 실행, 빌드 완료 프로젝트의 `files/`에 파일 추가/수정 → ~30초 후 `graph_watcher` task + `traces.jsonl`에 `"trigger":"watcher"` 확인.
+- 후속: Phase 2b(Scheduled Digest Agent) 별도 스펙/플랜. Phase 3(MCP 노출 + trace 기반 자동 튜닝).
 
 ## Current Objective
 
 LLM Wiki-inspired 개선 Task 1-5 완료. Obsidian vault sync 방식 1번 구현이 백엔드/export/plugin scaffold까지 진행됨. ProjectOS는 UI에서 local/Claude/Claude task graph build 설정을 전환할 수 있음. vault wiki/index/log/provenance를 QueryAgent와 Health에 활용함.
+
+## Completed In This Session (2026-06-02 OpenJarvis 방향성 분석)
+
+- OpenJarvis(Stanford Hazy Research)와 ProjectOS 비교 분석 후 전략 방향 문서 작성.
+- 결론: ProjectOS=기억(memory), OpenJarvis=행동(action)으로 상보적. 전면 채택(A) 기각, **패턴 차용(B) + 스킬/MCP 노출(C)** 채택.
+- 차용 패턴 5종: Scheduled Digest, Continuous Watcher, skills 카탈로그 표준, trace 기반 learning loop, constraint-aware routing.
+- 로드맵 Phase 1(라우팅 policy+budget, trace 로깅, skills descriptor) → Phase 2(Digest/Watcher 자동화) → Phase 3(MCP 노출+자동 튜닝).
+- 문서: `docs/superpowers/specs/2026-06-02-projectos-openjarvis-direction.md`
+- 코드 변경 없음. 권장 첫 구현: Phase 1 constraint-aware routing policy table + budget guard.
+
+## Completed In This Session (2026-06-01 Workflow Progress UI)
+
+사용자 추가 요청 1번 반영: 진행률 bar만으로는 현재 작업 단계 파악이 부족하므로 Obsidian 패널에 워크플로우 단계 표시를 추가함. 사용자 추가 요청 2번은 Claude task graph 단일 경로 E2E 이후 dependency 없는 chunk extraction을 worker 2개로 병렬화하는 방식으로 구현함.
+
+- **워크플로우 단계 UI** (`src/obsidian-plugin/src/ui/WorkflowStrip.svelte`, `src/obsidian-plugin/src/App.svelte`, `styles.css`)
+  - 헤더 아래에 `Project → Runtime → Sync → Collect → Ontology → Graph → Analysis → Query → Sim` 단계 스트립 추가
+  - 단계 상태: `idle / running / success / failed / skipped`
+  - running 단계 pulse, success/failed 색상 표시
+  - 좁은 Obsidian side panel에서 가로 스크롤로 깨짐 방지
+- **단계 상태 연결** (`src/obsidian-plugin/src/store/appStore.svelte.ts`, sections)
+  - project create/select/delete, runtime load/save, sync, collect parse, ontology, graph, analysis, query, simulation 액션에 workflow 상태 갱신 연결
+  - 기존 task SSE watch에 optional `workflowStepId`를 추가해 task progress와 단계 상태를 같이 갱신
+- **Claude task graph API E2E**
+  - backend `http://localhost:8002`에서 작은 임시 프로젝트로 parse → ontology → graph 수행
+  - runtime settings: `graph_build_mode=claude_task`, `graph_extraction_backend=claude_code`, `claude_code_model=claude-haiku-4-5`, `chunk_size=1800`, `chunk_overlap=150`
+  - 결과: graph task 완료, node-link graph 기준 `nodes=9`, `links=13`
+  - health: isolated 0, duplicate pairs 0, `wiki_graph_lint` mismatch 없음
+  - 임시 프로젝트 삭제 및 기존 runtime settings 복원 완료
+- **Graph build 병렬화** (`src/backend/app/agents/graph_builder_agent.py`, `src/backend/app/config.py`)
+  - `GRAPH_BUILD_WORKERS=2` 기본값 추가
+  - dependency 없는 chunk별 `_extract_from_chunk`를 semaphore 기반 worker 2개로 병렬 실행
+  - 공유 graph merge는 race를 피하기 위해 결과 수집 후 기존 chunk 순서로 순차 처리
+  - `claude_task` mode는 현재 전체 source file task 1개 구조라 변경하지 않음
+
+### 검증
+
+- `cd src/obsidian-plugin && npm run build` → success
+- `cd src/obsidian-plugin && npm test` → `11 passed`
+- 번들을 `src/backend/vault/.obsidian/plugins/projectos-vault-sync/`에 동기화
+- `pytest src/backend/tests/test_api/test_settings_api.py src/backend/tests/test_agents/test_graph_builder_agent.py src/backend/tests/test_agents/test_claude_task_graph_builder_agent.py` → `28 passed`
+
+### 다음 판단
+
+- Obsidian plugin runtime validation을 먼저 수행해 새 workflow UI와 sync/collect/query 수동 흐름을 확인
+- 실행 중인 backend 서버가 reload되지 않았다면 재시작해 `GRAPH_BUILD_WORKERS=2` 코드 반영
+- 이후 큰 프로젝트에서 worker=2 기준 graph build 시간/실패율 비교
 
 ## Completed In This Session (2026-06-01 Panel Nav Redesign + Simulation Timeline)
 
