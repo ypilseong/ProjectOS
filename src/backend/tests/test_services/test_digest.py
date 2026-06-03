@@ -192,3 +192,55 @@ def test_compose_without_analysis_file(monkeypatch, tmp_path):
     _write_graph(proj, [("n1", "Alpha", "Skill")])
     result = compose_digest("p1")
     assert "(분석 없음)" in result["markdown"]
+
+
+from app.services.digest import generate_digest
+
+
+def test_generate_writes_file_and_state(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    vault = tmp_path / "vault"
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(vault))
+    # trace.record_trace uses config.PROJECTS_DIR via its own import
+    monkeypatch.setattr("app.utils.trace.config.PROJECTS_DIR", str(tmp_path))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill")])
+
+    result = generate_digest("p1", trigger="manual")
+
+    digest_file = vault / "p1" / "Digests" / f"{result['date']}.md"
+    assert digest_file.exists()
+    assert "# Digest" in digest_file.read_text(encoding="utf-8")
+
+    state = json.loads((proj / "digest_state.json").read_text(encoding="utf-8"))
+    assert state["last_node_ids"] == ["n1"]
+    assert state["last_digest_date"] == result["date"]
+
+    assert "current_node_ids" not in result  # popped before return
+
+    traces = (proj / "traces.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert any('"operation": "digest"' in t for t in traces)
+
+
+def test_generate_idempotent_same_day(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    vault = tmp_path / "vault"
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(vault))
+    monkeypatch.setattr("app.utils.trace.config.PROJECTS_DIR", str(tmp_path))
+    proj = tmp_path / "p1"
+    _write_graph(proj, [("n1", "Alpha", "Skill")])
+
+    r1 = generate_digest("p1")
+    r2 = generate_digest("p1")
+
+    digest_dir = vault / "p1" / "Digests"
+    files = list(digest_dir.glob("*.md"))
+    assert len(files) == 1
+    assert r1["date"] == r2["date"]
+
+
+def test_generate_returns_none_when_no_graph(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
+    (tmp_path / "p1").mkdir()
+    assert generate_digest("p1") is None

@@ -177,3 +177,41 @@ def compose_digest(project_id: str) -> dict | None:
         "suggestion_count": len(suggestions),
         "current_node_ids": current_ids,
     }
+
+
+def generate_digest(project_id: str, trigger: str = "manual") -> dict | None:
+    from app.utils.trace import record_trace
+
+    result = compose_digest(project_id)
+    if result is None:
+        return None
+
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    digests_dir = Path(config.VAULT_DIR) / project_id / "Digests"
+    digests_dir.mkdir(parents=True, exist_ok=True)
+    (digests_dir / f"{result['date']}.md").write_text(
+        result["markdown"], encoding="utf-8"
+    )
+
+    current_ids = result.pop("current_node_ids")
+    (proj_dir / "digest_state.json").write_text(
+        json.dumps(
+            {"last_node_ids": current_ids, "last_digest_date": result["date"]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        record_trace(
+            project_id,
+            "digest",
+            trigger=trigger,
+            new_nodes=result["new_node_count"],
+            isolated=result["isolated_count"],
+            suggestions=result["suggestion_count"],
+        )
+    except Exception:
+        pass
+
+    return result
