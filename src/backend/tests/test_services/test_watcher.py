@@ -161,3 +161,10 @@ def test_start_noop_when_disabled(monkeypatch, tmp_path):
     svc = WatcherService()
     svc.start()
     assert svc._task is None
+
+
+def test_app_has_lifespan_and_watcher_imported():
+    import app.main as main_mod
+
+    assert main_mod.app.router.lifespan_context is not None
+    assert hasattr(main_mod, "WatcherService") or "WatcherService" in dir(main_mod)

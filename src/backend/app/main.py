@@ -1,11 +1,26 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import projects, graph, chat, tasks, user, settings, skills
+from app.services.watcher import WatcherService
 from app.utils.logger import configure_logging
 
 configure_logging()
 
-app = FastAPI(title="ProjectOS", version="0.1.0")
+_watcher = WatcherService()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _watcher.start()
+    try:
+        yield
+    finally:
+        await _watcher.stop()
+
+
+app = FastAPI(title="ProjectOS", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
