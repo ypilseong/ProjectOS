@@ -81,5 +81,16 @@ class TaskManager:
         self._save()
         self._append_project_task_log(task, "updated")
 
+    def has_active_build(self, project_id: str) -> bool:
+        build_types = {"graph", "graph_incremental", "graph_watcher"}
+        for task in self._tasks.values():
+            if (
+                task.project_id == project_id
+                and task.task_type in build_types
+                and task.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
+            ):
+                return True
+        return False
+
 
 task_manager = TaskManager()
