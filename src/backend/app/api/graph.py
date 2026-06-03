@@ -234,7 +234,7 @@ async def _run_ontology(task_id: str, project_id: str):
         reset_log_project(log_token)
 
 
-async def _run_graph(task_id: str, project_id: str, incremental: bool):
+async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: str = "manual"):
     from app.utils.logger import reset_log_project, set_log_project
     log_token = set_log_project(project_id)
     try:
@@ -461,6 +461,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool):
                 nodes=stats.total_nodes,
                 edges=stats.total_edges,
                 cost_usd=round(cost_delta, 6),
+                trigger=trigger,
             )
         except Exception:
             pass  # trace is best-effort; never fail a successful build on logging
