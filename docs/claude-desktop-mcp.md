@@ -45,6 +45,9 @@ Restart Claude Desktop after editing the config.
 
 - `projectos_create_project`
 - `projectos_upload_file`
+- `projectos_get_task`
+- `projectos_build_ontology`
+- `projectos_build_graph`
 - `projectos_list_projects`
 - `projectos_get_graph_health`
 - `projectos_query_career_graph`
@@ -57,6 +60,22 @@ Restart Claude Desktop after editing the config.
 `projectos_upload_file` accepts either `content_base64` for binary files such as
 PDF/DOCX or `content_text` for plain text. Uploading a file starts the normal
 ProjectOS parse task and returns a `task_id`.
+
+## Initial Graph Build Workflow
+
+Use this order from Claude Desktop:
+
+1. `projectos_create_project`
+2. `projectos_upload_file`
+3. Poll `projectos_get_task` until the upload parse task is `completed`
+4. `projectos_build_ontology`
+5. Poll `projectos_get_task` until the ontology task is `completed`
+6. `projectos_build_graph`
+7. Poll `projectos_get_task` until the graph task is `completed`
+8. `projectos_get_graph_health`
+
+Do not synthesize a graph manually from attachment text. ProjectOS graph builds
+must go through ontology extraction and graph build tasks.
 
 The bridge writes logs to stderr only. stdout is reserved for newline-delimited
 MCP JSON-RPC messages.

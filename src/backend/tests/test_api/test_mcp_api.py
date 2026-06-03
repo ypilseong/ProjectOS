@@ -51,6 +51,9 @@ def test_mcp_tools_list_includes_projectos_tools():
     names = {tool["name"] for tool in resp.json()["result"]["tools"]}
     assert "projectos_create_project" in names
     assert "projectos_upload_file" in names
+    assert "projectos_get_task" in names
+    assert "projectos_build_ontology" in names
+    assert "projectos_build_graph" in names
     assert "projectos_list_projects" in names
     assert "projectos_query_career_graph" in names
     assert "projectos_generate_digest" in names
@@ -183,6 +186,145 @@ def test_mcp_upload_file_requires_content():
     result = resp.json()["result"]
     assert result["isError"] is True
     assert "content_base64 or content_text is required" in result["content"][0]["text"]
+
+
+def test_mcp_get_task_tool_call():
+    from app.services.task_manager import task_manager
+
+    project = project_store.create(name="Task MCP", description="")
+    task = task_manager.create(project.project_id, "parse")
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_task",
+                "arguments": {"task_id": task.task_id},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["task_id"] == task.task_id
+    assert result["structuredContent"]["task_type"] == "parse"
+
+
+def test_mcp_build_ontology_requires_chunks():
+    project = project_store.create(name="No Chunks MCP", description="")
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_build_ontology",
+                "arguments": {"project_id": project.project_id},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "upload files and wait for parse" in result["content"][0]["text"]
+
+
+def test_mcp_build_ontology_starts_task(monkeypatch):
+    project = project_store.create(name="Ontology MCP", description="")
+    project_dir = Path(config.PROJECTS_DIR) / project.project_id
+    (project_dir / "chunks.json").write_text("[]", encoding="utf-8")
+    seen = {}
+
+    async def fake_run_ontology(task_id, project_id):
+        seen["task_id"] = task_id
+        seen["project_id"] = project_id
+
+    monkeypatch.setattr("app.api.graph._run_ontology", fake_run_ontology)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_build_ontology",
+                "arguments": {"project_id": project.project_id},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["task_type"] == "ontology"
+    assert seen["project_id"] == project.project_id
+
+
+def test_mcp_build_graph_requires_ontology():
+    project = project_store.create(name="No Ontology MCP", description="")
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_build_graph",
+                "arguments": {"project_id": project.project_id},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "run projectos_build_ontology first" in result["content"][0]["text"]
+
+
+def test_mcp_build_graph_starts_task(monkeypatch):
+    project = project_store.create(name="Graph MCP", description="")
+    project_dir = Path(config.PROJECTS_DIR) / project.project_id
+    (project_dir / "ontology.json").write_text(
+        json.dumps({"entity_types": [], "edge_types": [], "analysis_summary": ""}),
+        encoding="utf-8",
+    )
+    seen = {}
+
+    async def fake_run_graph(task_id, project_id, incremental):
+        seen["task_id"] = task_id
+        seen["project_id"] = project_id
+        seen["incremental"] = incremental
+
+    monkeypatch.setattr("app.api.graph._run_graph", fake_run_graph)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_build_graph",
+                "arguments": {"project_id": project.project_id},
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["task_type"] == "graph"
+    assert seen == {
+        "task_id": result["structuredContent"]["task_id"],
+        "project_id": project.project_id,
+        "incremental": False,
+    }
 
 
 def test_mcp_list_projects_tool_call():

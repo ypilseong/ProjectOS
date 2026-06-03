@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,27 @@ def list_mcp_tools() -> list[dict]:
                 "file_type": {"type": "string", "default": "note"},
             },
             ["project_id", "filename"],
+        ),
+        _tool(
+            "projectos_get_task",
+            "Return the status/progress of a ProjectOS background task.",
+            {"task_id": {"type": "string"}},
+            ["task_id"],
+        ),
+        _tool(
+            "projectos_build_ontology",
+            "Start ontology extraction for a project after uploaded files have been parsed.",
+            {"project_id": {"type": "string"}},
+            ["project_id"],
+        ),
+        _tool(
+            "projectos_build_graph",
+            "Start initial graph build for a project after ontology extraction has completed.",
+            {
+                "project_id": {"type": "string"},
+                "incremental": {"type": "boolean", "default": False},
+            },
+            ["project_id"],
         ),
         _tool(
             "projectos_list_projects",
@@ -199,6 +221,56 @@ async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
                 json.dumps(result, ensure_ascii=False),
                 result,
             )
+
+        if name == "projectos_get_task":
+            from app.services.task_manager import task_manager
+
+            task_id = str(args["task_id"])
+            task = task_manager.get(task_id)
+            if not task:
+                raise ValueError("Task not found")
+            payload = task.model_dump(mode="json")
+            return _text_result(json.dumps(payload, ensure_ascii=False), payload)
+
+        if name == "projectos_build_ontology":
+            from app.api.graph import _run_ontology
+            from app.models.project import ProjectStatus
+            from app.services.task_manager import task_manager
+
+            project_id = str(args["project_id"])
+            project = project_store.get(project_id)
+            if not project:
+                raise ValueError("Project not found")
+            chunks_path = _project_dir(project_id) / "chunks.json"
+            if not chunks_path.exists():
+                raise ValueError("chunks.json not found — upload files and wait for parse first")
+            project.status = ProjectStatus.ONTOLOGY
+            project_store.save(project)
+            task = task_manager.create(project_id, "ontology")
+            asyncio.create_task(_run_ontology(task.task_id, project_id))
+            payload = task.model_dump(mode="json")
+            return _text_result(json.dumps(payload, ensure_ascii=False), payload)
+
+        if name == "projectos_build_graph":
+            from app.api.graph import _run_graph
+            from app.models.project import ProjectStatus
+            from app.services.task_manager import task_manager
+
+            project_id = str(args["project_id"])
+            incremental = bool(args.get("incremental", False))
+            project = project_store.get(project_id)
+            if not project:
+                raise ValueError("Project not found")
+            ontology_path = _project_dir(project_id) / "ontology.json"
+            if not ontology_path.exists():
+                raise ValueError("ontology.json not found — run projectos_build_ontology first")
+            project.status = ProjectStatus.BUILDING
+            project_store.save(project)
+            task_type = "graph_incremental" if incremental else "graph"
+            task = task_manager.create(project_id, task_type)
+            asyncio.create_task(_run_graph(task.task_id, project_id, incremental=incremental))
+            payload = task.model_dump(mode="json")
+            return _text_result(json.dumps(payload, ensure_ascii=False), payload)
 
         if name == "projectos_list_projects":
             projects = [

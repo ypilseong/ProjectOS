@@ -35,7 +35,7 @@ badge (polls the list endpoint), weekly cadence, deleted-node tracking.
 외부 에이전트가 ProjectOS를 career-memory backend로 호출할 수 있도록 의존성 추가 없이 MCP JSON-RPC 최소 엔드포인트를 추가.
 - `POST /mcp`: MCP JSON-RPC `initialize`, `tools/list`, `tools/call` 지원. protocolVersion `2025-11-25`, tools capability 제공.
 - `GET /mcp/tools`: HTTP 디버깅/호환용 tool schema listing.
-- Tool adapter: `projectos_create_project`, `projectos_upload_file`, `projectos_list_projects`, `projectos_get_graph_health`, `projectos_query_career_graph`, `projectos_generate_digest`, `projectos_list_digests`, `projectos_get_digest`, `projectos_get_vault_note`, `projectos_read_traces`.
+- Tool adapter: `projectos_create_project`, `projectos_upload_file`, `projectos_get_task`, `projectos_build_ontology`, `projectos_build_graph`, `projectos_list_projects`, `projectos_get_graph_health`, `projectos_query_career_graph`, `projectos_generate_digest`, `projectos_list_digests`, `projectos_get_digest`, `projectos_get_vault_note`, `projectos_read_traces`.
 - 안전장치: vault note path traversal 차단, tool 실행 실패는 MCP `CallToolResult.isError=true`로 반환.
 - 검증: `python3 -m pytest src/backend/tests -q` → **313 passed**.
 - 참고: MCP 공식 스키마는 JSON-RPC 2.0, `tools/list`, `tools/call`, `CallToolResult.content/structuredContent/isError` 형태를 사용.
@@ -68,6 +68,16 @@ Claude Desktop에서 첨부 파일을 ProjectOS project로 전달해 초기 grap
 - MCP tool `projectos_upload_file`: 입력 `project_id`, `filename`, `content_base64`(binary PDF/DOCX 등) 또는 `content_text`, `file_type`; 반환 `task_id`, `files`.
 - 파일명은 basename으로 정리하고 빈 이름/빈 내용/잘못된 base64는 error로 반환.
 - 검증: targeted API/MCP tests `33 passed`; 전체 `python3 -m pytest src/backend/tests -q` → **325 passed**.
+
+## 2026-06-04 MCP Graph Build Tool 추가 (구현 완료, push 전)
+
+Claude Desktop이 업로드 후 그래프를 수동 합성하려는 문제를 막기 위해 빌드 단계 MCP tool 추가.
+- `projectos_get_task`: `task_id`로 parse/ontology/graph background task 상태 조회.
+- `projectos_build_ontology`: parse 완료 후 `chunks.json`을 전제로 ontology task 시작.
+- `projectos_build_graph`: ontology 완료 후 `ontology.json`을 전제로 initial/incremental graph task 시작.
+- 권장 순서 문서화: create project → upload file → poll parse task → build ontology → poll ontology task → build graph → poll graph task → graph health.
+- `docs/claude-desktop-mcp.md`에 “그래프를 첨부 텍스트에서 수동 합성하지 말고 ProjectOS build task를 사용”하라는 지침 추가.
+- 검증: `python3 -m pytest src/backend/tests/test_api/test_mcp_api.py -q` → 17 passed; 전체 `python3 -m pytest src/backend/tests -q` → **330 passed**.
 
 ## 앞으로 진행할 내용 (Next Up)
 
