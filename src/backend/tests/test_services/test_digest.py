@@ -67,3 +67,55 @@ def test_suggestions_include_analysis_suggestions():
     analysis = {"issues": [{"suggestion": "정량적 성과를 추가하세요."}]}
     out = _reinforcement_suggestions(_health(), analysis)
     assert "정량적 성과를 추가하세요." in out
+
+
+from app.services.digest import _cap_lines, _render_markdown
+
+
+def test_cap_lines_appends_overflow_note():
+    lines = [f"- item {i}" for i in range(25)]
+    capped = _cap_lines(lines)
+    assert len(capped) == 21
+    assert capped[-1] == "- ... 외 5개"
+
+
+def test_cap_lines_no_change_under_limit():
+    lines = ["- a", "- b"]
+    assert _cap_lines(lines) == ["- a", "- b"]
+
+
+def test_render_markdown_has_all_sections():
+    md = _render_markdown(
+        date_str="2026-06-03",
+        total_nodes=10,
+        total_edges=20,
+        new_node_names=["Alpha", "Beta"],
+        isolated=[{"name": "Foo", "type": "Concept"}],
+        missing_source=[],
+        analysis={"summary": "전반 평가", "issues": [{"description": "약점1"}]},
+        suggestions=["제안1"],
+    )
+    assert "# Digest 2026-06-03" in md
+    assert "## 요약" in md
+    assert "## 신규 노드" in md
+    assert "- [[Alpha]]" in md
+    assert "## 경고" in md
+    assert "[[Foo]]" in md
+    assert "## 약점 (직전 분석)" in md
+    assert "약점1" in md
+    assert "## 다음 보강 제안" in md
+    assert "- 제안1" in md
+
+
+def test_render_markdown_caps_new_nodes():
+    md = _render_markdown(
+        date_str="2026-06-03",
+        total_nodes=30,
+        total_edges=0,
+        new_node_names=[f"N{i}" for i in range(25)],
+        isolated=[],
+        missing_source=[],
+        analysis={},
+        suggestions=[],
+    )
+    assert "... 외 5개" in md

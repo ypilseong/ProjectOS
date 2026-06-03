@@ -36,3 +36,82 @@ def _reinforcement_suggestions(health: dict, analysis: dict) -> list[str]:
         if suggestion:
             out.append(suggestion)
     return out
+
+
+_LIST_CAP = 20
+
+
+def _cap_lines(rendered: list[str]) -> list[str]:
+    if len(rendered) <= _LIST_CAP:
+        return rendered
+    extra = len(rendered) - _LIST_CAP
+    return rendered[:_LIST_CAP] + [f"- ... 외 {extra}개"]
+
+
+def _render_markdown(
+    date_str: str,
+    total_nodes: int,
+    total_edges: int,
+    new_node_names: list[str],
+    isolated: list[dict],
+    missing_source: list[dict],
+    analysis: dict,
+    suggestions: list[str],
+) -> str:
+    lines = [f"# Digest {date_str}", "", "## 요약", ""]
+    lines.append(f"- 노드 {total_nodes}개 / 엣지 {total_edges}개")
+    lines.append(f"- 신규 노드 {len(new_node_names)}개")
+    lines.append(f"- 고립 노드 {len(isolated)}개")
+    lines.append("")
+
+    lines.append("## 신규 노드")
+    lines.append("")
+    if new_node_names:
+        lines.extend(_cap_lines([f"- [[{n}]]" for n in new_node_names]))
+    else:
+        lines.append("- (없음)")
+    lines.append("")
+
+    lines.append("## 경고")
+    lines.append("")
+    lines.append(f"### 고립 노드 ({len(isolated)})")
+    if isolated:
+        lines.extend(_cap_lines(
+            [f"- [[{n.get('name', '?')}]] ({n.get('type', '?')})" for n in isolated]
+        ))
+    else:
+        lines.append("- (없음)")
+    lines.append(f"### source 누락 노드 ({len(missing_source)})")
+    if missing_source:
+        lines.extend(_cap_lines(
+            [f"- [[{n.get('name', '?')}]] ({n.get('type', '?')})" for n in missing_source]
+        ))
+    else:
+        lines.append("- (없음)")
+    lines.append("")
+
+    lines.append("## 약점 (직전 분석)")
+    lines.append("")
+    summary = analysis.get("summary", "")
+    if summary:
+        lines.append(summary)
+        lines.append("")
+    issues = analysis.get("issues", [])
+    if issues:
+        for issue in issues[:5]:
+            desc = issue.get("description", "")
+            if desc:
+                lines.append(f"- {desc}")
+    else:
+        lines.append("- (분석 없음)")
+    lines.append("")
+
+    lines.append("## 다음 보강 제안")
+    lines.append("")
+    if suggestions:
+        lines.extend(f"- {s}" for s in suggestions)
+    else:
+        lines.append("- (없음)")
+    lines.append("")
+
+    return "\n".join(lines)
