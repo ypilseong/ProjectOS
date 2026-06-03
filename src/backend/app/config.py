@@ -9,6 +9,9 @@ class Config(BaseSettings):
     GRAPH_BUILD_WORKERS: int = 2
     WATCHER_ENABLED: bool = False
     WATCHER_POLL_SECONDS: int = 15
+    DIGEST_ENABLED: bool = False
+    DIGEST_HOUR: int = 7
+    DIGEST_POLL_SECONDS: int = 300
     CLAUDE_CODE_MODEL: str = ""
     CLAUDE_TASKS_DIR: str = "/tmp/projectos-claude-tasks"
     CLAUDE_TASK_BARE: bool = False

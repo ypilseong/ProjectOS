@@ -2,6 +2,46 @@
 
 Last updated: 2026-06-03
 
+## 2026-06-03 Phase 2b — Scheduled Digest Agent
+
+**What:** Deterministic daily digest per built project → `vault/<id>/Digests/YYYY-MM-DD.md`.
+No LLM calls; composed from `run_health_check` + new-node diff (`digest_state.json`) +
+reused `analysis.json`.
+
+**New files:** `app/services/digest.py` (compose/generate/should_run/DigestService),
+`app/api/digest.py` (POST `/api/projects/{id}/digest`, GET `/digests`, GET `/digests/{date}`).
+
+**Config:** `DIGEST_ENABLED=False` (opt-in), `DIGEST_HOUR=7`, `DIGEST_POLL_SECONDS=300`.
+
+**Wiring:** `DigestService` started/stopped in `app/main.py` lifespan alongside `WatcherService`.
+
+**Verification:** `python3 -m pytest tests/ -q` → 302 passed.
+
+**Next candidates:** local-LLM prose synthesis (optional layer), Obsidian plugin "new digest"
+badge (polls the list endpoint), weekly cadence, deleted-node tracking.
+
+## 앞으로 진행할 내용 (Next Up)
+
+작성 시점 2026-06-03. Phase 1/2a/2b 백엔드 구현은 모두 `main`에 머지됨. 다음 작업 우선순위:
+
+### A. Digest 후속 보강 (코드 리뷰에서 도출, non-blocking)
+- **스케줄 dedup 영속화**: `_last_run_date`가 인메모리라 백엔드 재시작 시 같은 날 재실행됨. 시작 시 `digest_state.json`의 `last_digest_date`를 읽어 seed 하거나 미사용 필드 제거. (`app/services/digest.py:224,245`)
+- **전체 프로젝트 실패 시에도 `_last_run_date`가 설정되는 동작**: best-effort라 허용 가능하나 주석/재시도 정책 검토. (`digest.py:240-245`)
+- **블로킹 파일 IO**: `poll_once`가 async인데 동기 IO 수행. 프로젝트 수 증가 시 `asyncio.to_thread(generate_digest, ...)` 고려.
+- **테스트 갭(minor)**: (a) `generate_digest`가 state를 쓴 뒤의 진짜 2차 실행 diff, (b) analysis issue 5개 cap, (c) `_loop` start/stop 라이프사이클.
+
+### B. 수동 검증 (선택)
+- `.env`에 `DIGEST_ENABLED=true`, `DIGEST_HOUR=<현재 시각>` 설정 후 서버 실행 → 빌드 완료 프로젝트에 대해 `vault/<id>/Digests/<오늘>.md` 생성 및 `traces.jsonl`에 `"action":"digest"` 기록 확인.
+
+### C. Phase 3 — MCP 노출 + trace 기반 자동 튜닝 (다음 주요 단계)
+- OpenJarvis 방향성 로드맵의 마지막 단계. `docs/superpowers/specs/2026-06-02-projectos-openjarvis-direction.md` §4.2~ 참고.
+- ProjectOS 그래프/쿼리/digest 기능을 MCP 서버로 노출 → 외부 에이전트가 ProjectOS를 memory backend로 사용.
+- `traces.jsonl`(graph_build/watcher/digest 결정 로그) 기반 learning loop: 라우팅/budget 정책 자동 튜닝.
+- 별도 brainstorming → spec → plan → subagent-driven 구현 사이클로 진행 권장.
+
+### D. 선택적 Digest 확장 (우선순위 낮음)
+- local-LLM prose synthesis 레이어, Obsidian plugin "new digest" 배지(list 엔드포인트 폴링), 주간 cadence, 삭제 노드 추적.
+
 ## Completed In This Session (2026-06-03 Phase 1 Foundation + Phase 2a File Watcher)
 
 OpenJarvis 방향성 로드맵의 Phase 1과 Phase 2a를 TDD subagent-driven 방식으로 구현 완료.
