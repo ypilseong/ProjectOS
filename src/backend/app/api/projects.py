@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import dataclasses
 import json
 import shutil
@@ -8,7 +9,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from app.config import config
@@ -21,6 +22,42 @@ router = APIRouter()
 
 def _project_vault(project_id: str) -> Path:
     return Path(config.VAULT_DIR) / project_id
+
+
+def _safe_upload_filename(filename: str) -> str:
+    safe = Path(filename).name.strip()
+    if not safe or safe in {".", ".."}:
+        raise HTTPException(status_code=400, detail="filename is required")
+    return safe
+
+
+async def save_file_and_start_parse(
+    project_id: str,
+    filename: str,
+    content: bytes,
+    file_type: str = "note",
+) -> dict:
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    safe_filename = _safe_upload_filename(filename)
+    if not content:
+        raise HTTPException(status_code=400, detail="file content is required")
+
+    files_dir = Path(config.PROJECTS_DIR) / project_id / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    dest = files_dir / safe_filename
+    async with aiofiles.open(dest, "wb") as out:
+        await out.write(content)
+
+    if safe_filename not in project.files:
+        project.files.append(safe_filename)
+    project.status = ProjectStatus.PARSING
+    project_store.save(project)
+
+    task = task_manager.create(project_id, "parse")
+    asyncio.create_task(_run_parse(task.task_id, project_id, [str(dest)], file_type))
+    return {"task_id": task.task_id, "files": [safe_filename]}
 
 
 @router.post("", status_code=201)
@@ -82,6 +119,29 @@ async def upload_files(
     task = task_manager.create(project_id, "parse")
     asyncio.create_task(_run_parse(task.task_id, project_id, saved_paths, file_type))
     return {"task_id": task.task_id, "files": [f.filename for f in files]}
+
+
+@router.post("/{project_id}/files/raw")
+async def upload_raw_file(
+    project_id: str,
+    request: Request,
+    filename: str = Query(...),
+    file_type: str = Query("note"),
+):
+    content = await request.body()
+    return await save_file_and_start_parse(project_id, filename, content, file_type)
+
+
+@router.post("/{project_id}/files/base64")
+async def upload_base64_file(project_id: str, body: dict):
+    filename = str(body.get("filename") or "")
+    file_type = str(body.get("file_type") or "note")
+    content_base64 = str(body.get("content_base64") or "")
+    try:
+        content = base64.b64decode(content_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="content_base64 is invalid")
+    return await save_file_and_start_parse(project_id, filename, content, file_type)
 
 
 @router.post("/{project_id}/files/add")

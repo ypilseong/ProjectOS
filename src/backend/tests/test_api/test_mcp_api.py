@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import networkx as nx
 from fastapi.testclient import TestClient
@@ -49,6 +50,7 @@ def test_mcp_tools_list_includes_projectos_tools():
 
     names = {tool["name"] for tool in resp.json()["result"]["tools"]}
     assert "projectos_create_project" in names
+    assert "projectos_upload_file" in names
     assert "projectos_list_projects" in names
     assert "projectos_query_career_graph" in names
     assert "projectos_generate_digest" in names
@@ -99,6 +101,88 @@ def test_mcp_create_project_requires_name():
     result = resp.json()["result"]
     assert result["isError"] is True
     assert "name is required" in result["content"][0]["text"]
+
+
+def test_mcp_upload_file_tool_call_text_content():
+    project = project_store.create(name="Upload From MCP", description="")
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_upload_file",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "filename": "note.txt",
+                    "content_text": "hello from claude desktop",
+                    "file_type": "note",
+                },
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    assert "task_id" in result["structuredContent"]
+    saved = Path(config.PROJECTS_DIR) / project.project_id / "files" / "note.txt"
+    assert saved.read_text(encoding="utf-8") == "hello from claude desktop"
+
+
+def test_mcp_upload_file_tool_call_base64_content():
+    import base64
+
+    project = project_store.create(name="Upload Binary From MCP", description="")
+    client = TestClient(app)
+    content = b"%PDF-1.4 fake pdf bytes"
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_upload_file",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "filename": "cv.pdf",
+                    "content_base64": base64.b64encode(content).decode("ascii"),
+                    "file_type": "resume",
+                },
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    saved = Path(config.PROJECTS_DIR) / project.project_id / "files" / "cv.pdf"
+    assert saved.read_bytes() == content
+
+
+def test_mcp_upload_file_requires_content():
+    project = project_store.create(name="Upload Missing Content", description="")
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_upload_file",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "filename": "empty.txt",
+                },
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "content_base64 or content_text is required" in result["content"][0]["text"]
 
 
 def test_mcp_list_projects_tool_call():

@@ -59,6 +59,62 @@ def test_upload_files(client, tmp_path):
     assert "task_id" in r.json()
 
 
+def test_upload_raw_file(client):
+    from app.config import config as _cfg
+
+    create_r = client.post("/api/projects", json={"name": "Raw Upload Test"})
+    pid = create_r.json()["project_id"]
+    content = b"raw text content for mcp upload"
+
+    r = client.post(
+        f"/api/projects/{pid}/files/raw?filename=raw.txt&file_type=note",
+        content=content,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert r.status_code == 200
+    assert "task_id" in r.json()
+    assert r.json()["files"] == ["raw.txt"]
+    saved = Path(_cfg.PROJECTS_DIR) / pid / "files" / "raw.txt"
+    assert saved.read_bytes() == content
+
+
+def test_upload_base64_file(client):
+    import base64
+    from app.config import config as _cfg
+
+    create_r = client.post("/api/projects", json={"name": "Base64 Upload Test"})
+    pid = create_r.json()["project_id"]
+    content = b"base64 text content for mcp upload"
+
+    r = client.post(
+        f"/api/projects/{pid}/files/base64",
+        json={
+            "filename": "encoded.txt",
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "file_type": "note",
+        },
+    )
+
+    assert r.status_code == 200
+    assert "task_id" in r.json()
+    saved = Path(_cfg.PROJECTS_DIR) / pid / "files" / "encoded.txt"
+    assert saved.read_bytes() == content
+
+
+def test_upload_base64_file_rejects_invalid_content(client):
+    create_r = client.post("/api/projects", json={"name": "Bad Base64 Upload Test"})
+    pid = create_r.json()["project_id"]
+
+    r = client.post(
+        f"/api/projects/{pid}/files/base64",
+        json={"filename": "bad.txt", "content_base64": "not base64 !!!"},
+    )
+
+    assert r.status_code == 400
+    assert r.json()["detail"] == "content_base64 is invalid"
+
+
 def test_get_vault_tree_empty(client):
     create_r = client.post("/api/projects", json={"name": "Vault Test"})
     pid = create_r.json()["project_id"]

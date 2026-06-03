@@ -44,6 +44,7 @@ Restart Claude Desktop after editing the config.
 ## Exposed Tools
 
 - `projectos_create_project`
+- `projectos_upload_file`
 - `projectos_list_projects`
 - `projectos_get_graph_health`
 - `projectos_query_career_graph`
@@ -52,6 +53,10 @@ Restart Claude Desktop after editing the config.
 - `projectos_get_digest`
 - `projectos_get_vault_note`
 - `projectos_read_traces`
+
+`projectos_upload_file` accepts either `content_base64` for binary files such as
+PDF/DOCX or `content_text` for plain text. Uploading a file starts the normal
+ProjectOS parse task and returns a `task_id`.
 
 The bridge writes logs to stderr only. stdout is reserved for newline-delimited
 MCP JSON-RPC messages.

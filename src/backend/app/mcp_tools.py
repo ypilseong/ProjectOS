@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,24 @@ def list_mcp_tools() -> list[dict]:
                 "description": {"type": "string", "default": ""},
             },
             ["name"],
+        ),
+        _tool(
+            "projectos_upload_file",
+            "Upload a file into a ProjectOS project and start document parsing.",
+            {
+                "project_id": {"type": "string"},
+                "filename": {"type": "string"},
+                "content_base64": {
+                    "type": "string",
+                    "description": "Base64-encoded file bytes. Use this for binary files such as PDF or DOCX.",
+                },
+                "content_text": {
+                    "type": "string",
+                    "description": "Plain text file content. Used only when content_base64 is omitted.",
+                },
+                "file_type": {"type": "string", "default": "note"},
+            },
+            ["project_id", "filename"],
         ),
         _tool(
             "projectos_list_projects",
@@ -153,6 +172,32 @@ async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
             return _text_result(
                 json.dumps(payload, ensure_ascii=False),
                 {"project": payload, "project_id": project.project_id},
+            )
+
+        if name == "projectos_upload_file":
+            from app.api.projects import save_file_and_start_parse
+
+            project_id = str(args["project_id"])
+            filename = str(args["filename"])
+            file_type = str(args.get("file_type") or "note")
+            if args.get("content_base64"):
+                try:
+                    content = base64.b64decode(str(args["content_base64"]), validate=True)
+                except Exception:
+                    raise ValueError("content_base64 is invalid")
+            elif args.get("content_text") is not None:
+                content = str(args["content_text"]).encode("utf-8")
+            else:
+                raise ValueError("content_base64 or content_text is required")
+            result = await save_file_and_start_parse(
+                project_id,
+                filename,
+                content,
+                file_type,
+            )
+            return _text_result(
+                json.dumps(result, ensure_ascii=False),
+                result,
             )
 
         if name == "projectos_list_projects":

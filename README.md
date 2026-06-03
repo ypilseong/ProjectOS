@@ -58,9 +58,9 @@ endpoint. Claude Desktop local MCP configs should launch the stdio bridge:
 }
 ```
 
-Available tools include project creation/listing, graph health checks, career
-graph queries, digest generation/reading, vault note reading, and trace reading.
-See `docs/claude-desktop-mcp.md` for the full setup.
+Available tools include project creation/listing, file upload, graph health
+checks, career graph queries, digest generation/reading, vault note reading, and
+trace reading. See `docs/claude-desktop-mcp.md` for the full setup.
 
 ## Tests
 
