@@ -215,3 +215,58 @@ def generate_digest(project_id: str, trigger: str = "manual") -> dict | None:
         pass
 
     return result
+
+
+class DigestService:
+    def __init__(self):
+        self._task: asyncio.Task | None = None
+        self._stop = False
+        self._last_run_date: date | None = None
+
+    def eligible_projects(self) -> list[str]:
+        root = Path(config.PROJECTS_DIR)
+        if not root.exists():
+            return []
+        result = []
+        for proj in sorted(root.iterdir()):
+            if proj.is_dir() and (proj / "graph.json").exists():
+                result.append(proj.name)
+        return result
+
+    async def poll_once(self, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        if not should_run(now, self._last_run_date, config.DIGEST_HOUR):
+            return
+        for project_id in self.eligible_projects():
+            try:
+                generate_digest(project_id, trigger="scheduled")
+            except Exception as e:
+                logger.error(f"Digest: {project_id} 생성 실패: {e}")
+        self._last_run_date = now.date()
+
+    async def _loop(self) -> None:
+        while not self._stop:
+            try:
+                await self.poll_once()
+            except Exception as e:
+                logger.error(f"Digest 폴링 사이클 실패: {e}")
+            await asyncio.sleep(config.DIGEST_POLL_SECONDS)
+
+    def start(self) -> None:
+        if not config.DIGEST_ENABLED:
+            return
+        self._stop = False
+        self._task = asyncio.create_task(self._loop())
+        logger.info(
+            f"Digest 시작 (간격 {config.DIGEST_POLL_SECONDS}s, 시각 {config.DIGEST_HOUR}시)"
+        )
+
+    async def stop(self) -> None:
+        self._stop = True
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._task = None

@@ -244,3 +244,83 @@ def test_generate_returns_none_when_no_graph(monkeypatch, tmp_path):
     monkeypatch.setattr("app.services.digest.config.VAULT_DIR", str(tmp_path / "vault"))
     (tmp_path / "p1").mkdir()
     assert generate_digest("p1") is None
+
+
+import asyncio
+
+from app.services.digest import DigestService
+
+
+def test_eligible_projects_requires_graph(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "graph.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "unbuilt").mkdir()
+    svc = DigestService()
+    assert svc.eligible_projects() == ["built"]
+
+
+def test_poll_once_runs_generate_when_due(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.DIGEST_HOUR", 0)
+    built = tmp_path / "p1"
+    built.mkdir()
+    (built / "graph.json").write_text("{}", encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.digest.generate_digest",
+        lambda pid, trigger="scheduled": calls.append((pid, trigger)),
+    )
+
+    svc = DigestService()
+    asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 9, 0)))
+    assert calls == [("p1", "scheduled")]
+    assert svc._last_run_date == date(2026, 6, 3)
+
+
+def test_poll_once_skips_when_not_due(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.DIGEST_HOUR", 7)
+    built = tmp_path / "p1"
+    built.mkdir()
+    (built / "graph.json").write_text("{}", encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(
+        "app.services.digest.generate_digest",
+        lambda pid, trigger="scheduled": calls.append(pid),
+    )
+
+    svc = DigestService()
+    asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 6, 0)))  # before hour
+    assert calls == []
+
+
+def test_poll_once_continues_after_project_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.digest.config.PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr("app.services.digest.config.DIGEST_HOUR", 0)
+    for pid in ("p1", "p2"):
+        d = tmp_path / pid
+        d.mkdir()
+        (d / "graph.json").write_text("{}", encoding="utf-8")
+
+    seen = []
+
+    def flaky(pid, trigger="scheduled"):
+        seen.append(pid)
+        if pid == "p1":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.services.digest.generate_digest", flaky)
+    svc = DigestService()
+    asyncio.run(svc.poll_once(now=datetime(2026, 6, 3, 9, 0)))
+    assert seen == ["p1", "p2"]  # p2 still processed despite p1 error
+
+
+def test_start_noop_when_disabled(monkeypatch):
+    monkeypatch.setattr("app.services.digest.config.DIGEST_ENABLED", False)
+    svc = DigestService()
+    svc.start()
+    assert svc._task is None
