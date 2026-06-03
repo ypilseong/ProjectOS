@@ -28,23 +28,33 @@ badge (polls the list endpoint), weekly cadence, deleted-node tracking.
 - **best-effort 정책 주석**: 한 cycle에서 일부 프로젝트가 실패해도 다음 날까지 재시도하지 않음(의도된 동작)임을 주석화.
 - **테스트 5종 추가**: 2차 실행 diff(`test_generate_second_run_diffs_against_written_state`), analysis issue 5개 cap(`test_render_markdown_caps_analysis_issues_at_five`), 재시작 dedup(`test_poll_once_skips_project_with_state_for_today_after_restart`), all-today seed(`test_poll_once_seeds_last_run_when_all_projects_have_today_state`), start/stop lifecycle(`test_start_stop_lifecycle_when_enabled`).
 
-> ⚠️ **미커밋 상태**: 위 변경(`app/services/digest.py`, `tests/test_services/test_digest.py`)과 본 핸드오프 문서 갱신은 현재 **워킹 트리에만 존재**하며 커밋·`main` 머지·push 되지 않음. Phase 2b 본체(merge `8c9605c`, 302 passed)와 달리 git 히스토리에 없으므로 영속화 필요 → Next Up A 참조.
+> ⚠️ **push 차단 상태**: 위 변경은 로컬 `main`에 `0fcc848 fix(digest): persist scheduled dedup state`로 커밋됨. `git push origin main`은 `/usr/bin/gh: not found` 및 HTTPS credential 부재로 실패. 인증 가능한 환경에서 push 필요.
+
+## 2026-06-03 Phase 3 시작 — 최소 MCP Tool 노출 (구현 완료, push 전)
+
+외부 에이전트가 ProjectOS를 career-memory backend로 호출할 수 있도록 의존성 추가 없이 MCP JSON-RPC 최소 엔드포인트를 추가.
+- `POST /mcp`: MCP JSON-RPC `initialize`, `tools/list`, `tools/call` 지원. protocolVersion `2025-11-25`, tools capability 제공.
+- `GET /mcp/tools`: HTTP 디버깅/호환용 tool schema listing.
+- Tool adapter: `projectos_list_projects`, `projectos_get_graph_health`, `projectos_query_career_graph`, `projectos_generate_digest`, `projectos_list_digests`, `projectos_get_digest`, `projectos_get_vault_note`, `projectos_read_traces`.
+- 안전장치: vault note path traversal 차단, tool 실행 실패는 MCP `CallToolResult.isError=true`로 반환.
+- 검증: `python3 -m pytest src/backend/tests -q` → **313 passed**.
+- 참고: MCP 공식 스키마는 JSON-RPC 2.0, `tools/list`, `tools/call`, `CallToolResult.content/structuredContent/isError` 형태를 사용.
 
 ## 앞으로 진행할 내용 (Next Up)
 
 작성 시점 2026-06-03. Phase 1/2a/2b 백엔드 구현 본체는 `main`에 머지됨. 다음 작업 우선순위:
 
 ### A. Digest 후속 보강 커밋 (즉시)
-- 워킹 트리의 digest 보강 변경(`app/services/digest.py`, `tests/test_services/test_digest.py`) + 본 문서를 커밋 → `main` 머지 → push. **주의**: 동일 워킹 트리에 무관한 선행 미커밋 변경(`api/projects.py`, `tests/conftest.py`, `test_graph_builder_agent.py`, obsidian-plugin, untracked `test_simulation_agent.py`/`WorkflowStrip.svelte` 등)이 섞여 있으므로 digest 관련 파일만 선별 staging 할 것.
+- **커밋 완료, push 미완료**: digest 보강 변경(`app/services/digest.py`, `tests/test_services/test_digest.py`) + 본 문서는 `0fcc848`로 로컬 `main`에 커밋됨. `git push origin main`은 GitHub HTTPS 인증 문제로 실패했으므로 인증 가능한 셸에서 push 필요.
 
 ### B. 수동 검증 (선택)
 - `.env`에 `DIGEST_ENABLED=true`, `DIGEST_HOUR=<현재 시각>` 설정 후 서버 실행 → 빌드 완료 프로젝트에 대해 `vault/<id>/Digests/<오늘>.md` 생성 및 `traces.jsonl`에 `"action":"digest"` 기록 확인.
 
 ### C. Phase 3 — MCP 노출 + trace 기반 자동 튜닝 (다음 주요 단계)
-- OpenJarvis 방향성 로드맵의 마지막 단계. `docs/superpowers/specs/2026-06-02-projectos-openjarvis-direction.md` §4.2~ 참고.
-- ProjectOS 그래프/쿼리/digest 기능을 MCP 서버로 노출 → 외부 에이전트가 ProjectOS를 memory backend로 사용.
+- **진행 중** OpenJarvis 방향성 로드맵의 마지막 단계. `docs/superpowers/specs/2026-06-02-projectos-openjarvis-direction.md` §4.2~ 참고.
+- **진행 중** ProjectOS 그래프/쿼리/digest 기능을 MCP 서버로 노출 → 외부 에이전트가 ProjectOS를 memory backend로 사용.
 - `traces.jsonl`(graph_build/watcher/digest 결정 로그) 기반 learning loop: 라우팅/budget 정책 자동 튜닝.
-- 별도 brainstorming → spec → plan → subagent-driven 구현 사이클로 진행 권장.
+- 다음: MCP endpoint를 실제 Claude/Codex MCP client에서 연결 검증하거나, trace 기반 tuning spec/plan 작성.
 
 ### D. 선택적 Digest 확장 (우선순위 낮음)
 - local-LLM prose synthesis 레이어, Obsidian plugin "new digest" 배지(list 엔드포인트 폴링), 주간 cadence, 삭제 노드 추적.

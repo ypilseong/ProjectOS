@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import projects, graph, chat, tasks, user, settings, skills, digest
+from app.api import projects, graph, chat, tasks, user, settings, skills, digest, mcp
 from app.services.watcher import WatcherService
 from app.services.digest import DigestService
 from app.utils.logger import configure_logging
@@ -48,6 +48,7 @@ app.include_router(chat.router, prefix="/api/projects", tags=["chat"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 app.include_router(digest.router, prefix="/api/projects", tags=["digest"])
+app.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 
 
 @app.get("/health")
