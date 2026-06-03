@@ -39,6 +39,29 @@ logs/projects/{project_id}/projectos.log
 logs/projects/{project_id}/tasks.log
 ```
 
+## MCP for Claude Desktop
+
+ProjectOS exposes its project memory as MCP tools through the backend `/mcp`
+endpoint. Claude Desktop local MCP configs should launch the stdio bridge:
+
+```json
+{
+  "mcpServers": {
+    "projectos": {
+      "command": "python3",
+      "args": ["src/backend/projectos_mcp_stdio.py"],
+      "env": {
+        "PROJECTOS_MCP_URL": "http://127.0.0.1:8003/mcp"
+      }
+    }
+  }
+}
+```
+
+Available tools include project creation/listing, graph health checks, career
+graph queries, digest generation/reading, vault note reading, and trace reading.
+See `docs/claude-desktop-mcp.md` for the full setup.
+
 ## Tests
 
 ```bash
