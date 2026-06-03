@@ -125,3 +125,14 @@ def test_mcp_notification_returns_accepted():
     )
 
     assert resp.status_code == 202
+
+
+def test_mcp_ping():
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 6, "method": "ping"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"jsonrpc": "2.0", "id": 6, "result": {}}

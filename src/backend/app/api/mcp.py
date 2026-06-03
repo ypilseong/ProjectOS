@@ -50,4 +50,7 @@ async def mcp_json_rpc(message: dict):
         result = await call_mcp_tool(name, params.get("arguments") or {})
         return _response(request_id, result)
 
+    if method == "ping":
+        return _response(request_id, {})
+
     return _error(request_id, -32601, f"Method not found: {method}")

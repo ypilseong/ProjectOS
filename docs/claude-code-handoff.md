@@ -40,6 +40,16 @@ badge (polls the list endpoint), weekly cadence, deleted-node tracking.
 - 검증: `python3 -m pytest src/backend/tests -q` → **313 passed**.
 - 참고: MCP 공식 스키마는 JSON-RPC 2.0, `tools/list`, `tools/call`, `CallToolResult.content/structuredContent/isError` 형태를 사용.
 
+## 2026-06-03 Claude Desktop MCP stdio bridge (구현 완료, push 전)
+
+Claude Desktop local MCP 설정에서 ProjectOS를 바로 호출할 수 있도록 HTTP MCP endpoint 앞단에 stdio bridge 추가.
+- `src/backend/projectos_mcp_stdio.py`: newline-delimited JSON-RPC stdin/stdout 메시지를 `PROJECTOS_MCP_URL`(기본 `http://127.0.0.1:8002/mcp`)로 프록시.
+- stdout에는 MCP JSON-RPC 응답만 기록하고, 로그는 stderr로 분리.
+- `/mcp` 라우터에 `ping` 지원 추가.
+- 연결 문서: `docs/claude-desktop-mcp.md`에 backend 실행 명령과 `claude_desktop_config.json` 예시 추가.
+- 테스트 추가: bridge forwarding/parse error/unreachable backend, `/mcp` ping.
+- 검증: `python3 -m pytest src/backend/tests -q` → **317 passed**.
+
 ## 앞으로 진행할 내용 (Next Up)
 
 작성 시점 2026-06-03. Phase 1/2a/2b 백엔드 구현 본체는 `main`에 머지됨. 다음 작업 우선순위:
@@ -54,7 +64,7 @@ badge (polls the list endpoint), weekly cadence, deleted-node tracking.
 - **진행 중** OpenJarvis 방향성 로드맵의 마지막 단계. `docs/superpowers/specs/2026-06-02-projectos-openjarvis-direction.md` §4.2~ 참고.
 - **진행 중** ProjectOS 그래프/쿼리/digest 기능을 MCP 서버로 노출 → 외부 에이전트가 ProjectOS를 memory backend로 사용.
 - `traces.jsonl`(graph_build/watcher/digest 결정 로그) 기반 learning loop: 라우팅/budget 정책 자동 튜닝.
-- 다음: MCP endpoint를 실제 Claude/Codex MCP client에서 연결 검증하거나, trace 기반 tuning spec/plan 작성.
+- 다음: Claude Desktop에서 실제 연결 검증 후, trace 기반 tuning spec/plan 작성.
 
 ### D. 선택적 Digest 확장 (우선순위 낮음)
 - local-LLM prose synthesis 레이어, Obsidian plugin "new digest" 배지(list 엔드포인트 폴링), 주간 cadence, 삭제 노드 추적.
