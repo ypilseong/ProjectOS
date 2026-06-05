@@ -418,6 +418,13 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         graph_agent.save(graph, graph_path)
         hash_store.save()
 
+        try:
+            from app.services.retrieval_index import build_node_index, build_chunk_index
+            await build_node_index(project_id)
+            await build_chunk_index(project_id)
+        except Exception as e:
+            logger.warning(f"retrieval index build skipped: {e}")
+
         total_nodes = graph.number_of_nodes()
         writable_nodes = sum(
             1 for _, data in graph.nodes(data=True) if data.get("type") != "Category"
