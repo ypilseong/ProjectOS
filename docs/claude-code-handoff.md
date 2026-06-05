@@ -22,8 +22,9 @@ Last updated: 2026-06-05
 - **연결:** `QueryAgent._search_graph`/`_find_relevant_chunks`를 async로 전환해 `hybrid_search`에 위임. `stream()`은 `vault_path` basename으로 `project_id` 도출 후 await. 노드 텍스트는 name을 2회 반복해 name>desc 가중치 유지.
 - **파이프라인 빌드 훅:** `graph.py _run_graph`에서 graph.json 저장 직후 `build_node_index` + `build_chunk_index`(best-effort, 실패해도 파이프라인 무중단). 커밋됨.
 - **폴백 불변식:** `EMBEDDING_BASE_URL` 미설정/임베딩 실패/인덱스 stale·손상 시 키워드 전용 경로로 자동 폴백(현 동작 유지). 테스트 env에서 URL 미설정→인덱스 미생성.
-- **커밋(브랜치 `hybrid-retrieval`):** `43387d4`(spec), `6391b58`(plan), `3bd80a1`(primitives), `72ad2cc`(index cache), `a4f1336`(hybrid_search), `1ad6b3a`(QueryAgent wiring), `4d1eda6`(graph.py 빌드 훅).
-- **검증:** `python3 -m pytest tests/ -q` → **373 passed**.
+- **커밋(브랜치 `hybrid-retrieval`):** `43387d4`(spec), `6391b58`(plan), `3bd80a1`(primitives), `72ad2cc`(index cache), `a4f1336`(hybrid_search), `1ad6b3a`(QueryAgent wiring), `4d1eda6`(graph.py 빌드 훅), `147db23`(handoff), `08ad90d`(리뷰 수정).
+- **최종 코드 리뷰(opus subagent):** Critical 없음, 폴백 불변식 검증 통과. Important 2건 수정 완료 — (1) `keyword_scores`가 토큰 *존재*만 세어 name 2회 반복이 실제 2x 가중이 안 되던 문제를 *출현 횟수* 카운트로 변경해 name>desc 순위 복원, (2) 해당 테스트가 삽입 순서로 통과하던 false-positive를 삽입 순서 역전으로 강화. Minor — `_search_graph` 빈 쿼리 가드 추가, stale-id 필터 테스트 추가.
+- **검증:** `python3 -m pytest tests/ -q` → **374 passed**.
 - ⚠️ **미커밋 항목:** `projects.py _run_parse`의 parse-time 청크 인덱스 훅(7줄)은 작업 트리에만 존재. 사용자의 진행 중 작업(simulation 엔드포인트 등, `app.agents.simulation_agent` 미추적)이 같은 파일에 섞여 있어 분리 커밋하지 않음. 기능상 graph build 훅이 청크 인덱스도 재빌드하므로 무방. 사용자가 projects.py WIP과 함께 커밋 예정.
 - **다음:** 최종 코드 리뷰 subagent → `finishing-a-development-branch` → 개선점 #2(reconcile) spec.
 
