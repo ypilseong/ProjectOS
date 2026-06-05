@@ -1,6 +1,21 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-03
+Last updated: 2026-06-05
+
+## 2026-06-05 claude-obsidian 비교 개선 (진행 중)
+
+**배경:** claude-obsidian(github.com/AgriciDaniel/claude-obsidian)과 ProjectOS를 비교해 개선점 5종 도출.
+사용자 지시: #1부터 순차 진행, #6(transport 자동감지)은 제외, 작업은 subagent로, 진행 내역은 본 문서에 기록.
+
+**개선점 우선순위:**
+1. **(진행 중) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
+2. Vault 수동 편집 → 그래프 역반영(reconcile) 경로 부재.
+3. "Hot cache"(claude-obsidian `hot.md`) 부재 — MCP 세션 진입용 압축 컨텍스트.
+4. 출처 인용 강제화(현재 프롬프트 권유만).
+5. 능동적 지식 보강(autoresearch) — 고립 노드/약점 자동 채움.
+- (#6 제외) transport 자동감지: 도메인 파이프라인상 백엔드 상주 불가피, 사용자 제외.
+
+**#1 상태:** 설계 승인 완료(빌드 시 캐시 + 청크·노드 적용). 다음: 구현 plan 작성 → subagent TDD 실행.
 
 ## 2026-06-03 Phase 2b — Scheduled Digest Agent
 
