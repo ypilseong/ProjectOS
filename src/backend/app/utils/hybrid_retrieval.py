@@ -45,3 +45,34 @@ def cosine_rank(query_vec, matrix: np.ndarray, ids: list[str]) -> list[str]:
     sims = mat @ q_norm
     order = np.argsort(-sims)
     return [ids[i] for i in order]
+
+
+async def hybrid_search(query, project_id, kind, items, top_n, embedder=None):
+    """Return up to top_n item ids ranked by hybrid keyword+dense relevance.
+
+    Falls back to keyword-only ranking when no index exists or embedding fails.
+    `items` is {id: text} for the current corpus; results are restricted to it.
+    """
+    from app.services.retrieval_index import load_index
+
+    kw = keyword_scores(query, items)
+    kw_ranking = [i for i, _ in sorted(kw.items(), key=lambda x: -x[1])]
+
+    loaded = load_index(project_id, kind)
+    if loaded is None:
+        return kw_ranking[:top_n]
+
+    matrix, ids = loaded
+    if embedder is None:
+        from app.utils.embedding_client import EmbeddingClient
+        embedder = EmbeddingClient()
+    try:
+        query_vec = (await embedder.embed([query]))[0]
+    except Exception as e:
+        logger.warning(f"hybrid_search: query embed failed: {e}")
+        return kw_ranking[:top_n]
+
+    dense_ranking = cosine_rank(query_vec, matrix, ids)
+    fused = rrf_fuse([kw_ranking, dense_ranking])
+    fused = [i for i in fused if i in items]
+    return fused[:top_n]

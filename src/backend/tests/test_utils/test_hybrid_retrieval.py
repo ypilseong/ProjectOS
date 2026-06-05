@@ -35,3 +35,67 @@ def test_cosine_rank_orders_by_similarity():
     ranked = cosine_rank([1.0, 0.0], matrix, ids)
     assert ranked[0] == "x"  # identical direction
     assert ranked[-1] == "y"  # orthogonal
+
+
+import json
+import pytest
+from app.config import config
+from app.utils import hybrid_retrieval
+from app.services import retrieval_index
+
+
+class _FakeEmbedder:
+    def __init__(self, vec):
+        self.vec = vec
+
+    async def embed(self, texts):
+        return [self.vec for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_keyword_only_when_no_index(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    items = {"a": "python graph", "b": "java"}
+    result = await hybrid_retrieval.hybrid_search(
+        "python", "pX", "chunks", items, top_n=5)
+    assert result == ["a"]  # only keyword match, no index present
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_blends_dense_when_index_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "BAAI/bge-m3")
+    pid = "pY"
+    emb = tmp_path / pid / "embeddings"
+    emb.mkdir(parents=True)
+    # b is dense-similar to the query vector [1,0]; keyword favors a
+    np.save(emb / "chunks.npy", np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float16))
+    (emb / "chunks_meta.json").write_text(json.dumps(
+        {"ids": ["a", "b"], "model": "BAAI/bge-m3", "dim": 2}), encoding="utf-8")
+    items = {"a": "python", "b": "serpent reptile"}
+    result = await hybrid_retrieval.hybrid_search(
+        "python", pid, "chunks", items, top_n=5,
+        embedder=_FakeEmbedder([1.0, 0.0]))
+    # both surface: a via keyword, b via dense
+    assert set(result) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_falls_back_when_embed_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "BAAI/bge-m3")
+    pid = "pZ"
+    emb = tmp_path / pid / "embeddings"
+    emb.mkdir(parents=True)
+    np.save(emb / "chunks.npy", np.array([[1.0, 0.0]], dtype=np.float16))
+    (emb / "chunks_meta.json").write_text(json.dumps(
+        {"ids": ["a"], "model": "BAAI/bge-m3", "dim": 2}), encoding="utf-8")
+
+    class Boom:
+        async def embed(self, texts):
+            raise RuntimeError("down")
+
+    items = {"a": "python", "b": "java"}
+    result = await hybrid_retrieval.hybrid_search(
+        "python", pid, "chunks", items, top_n=5, embedder=Boom())
+    assert result == ["a"]  # keyword-only fallback
