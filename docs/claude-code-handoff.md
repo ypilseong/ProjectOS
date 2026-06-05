@@ -8,14 +8,24 @@ Last updated: 2026-06-05
 사용자 지시: #1부터 순차 진행, #6(transport 자동감지)은 제외, 작업은 subagent로, 진행 내역은 본 문서에 기록.
 
 **개선점 우선순위:**
-1. **(진행 중) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
-2. Vault 수동 편집 → 그래프 역반영(reconcile) 경로 부재.
+1. **(완료) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
+2. **(다음)** Vault 수동 편집 → 그래프 역반영(reconcile) 경로 부재.
 3. "Hot cache"(claude-obsidian `hot.md`) 부재 — MCP 세션 진입용 압축 컨텍스트.
 4. 출처 인용 강제화(현재 프롬프트 권유만).
 5. 능동적 지식 보강(autoresearch) — 고립 노드/약점 자동 채움.
 - (#6 제외) transport 자동감지: 도메인 파이프라인상 백엔드 상주 불가피, 사용자 제외.
 
-**#1 상태:** 설계 승인 완료(빌드 시 캐시 + 청크·노드 적용). 다음: 구현 plan 작성 → subagent TDD 실행.
+**#1 하이브리드 검색 — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **신규 모듈:**
+  - `app/utils/hybrid_retrieval.py` — `keyword_scores`(token-substring 카운트, 한국어 조사 대응), `rrf_fuse`(RRF k=60), `cosine_rank`(정규화 코사인), `async hybrid_search(query, project_id, kind, items, top_n, embedder=None)`.
+  - `app/services/retrieval_index.py` — `build_chunk_index`/`build_node_index`(float16 `.npy` + `{kind}_meta.json`, batch 64), `load_index`(model/dim stale 무효화, `project_id=None`→None).
+- **연결:** `QueryAgent._search_graph`/`_find_relevant_chunks`를 async로 전환해 `hybrid_search`에 위임. `stream()`은 `vault_path` basename으로 `project_id` 도출 후 await. 노드 텍스트는 name을 2회 반복해 name>desc 가중치 유지.
+- **파이프라인 빌드 훅:** `graph.py _run_graph`에서 graph.json 저장 직후 `build_node_index` + `build_chunk_index`(best-effort, 실패해도 파이프라인 무중단). 커밋됨.
+- **폴백 불변식:** `EMBEDDING_BASE_URL` 미설정/임베딩 실패/인덱스 stale·손상 시 키워드 전용 경로로 자동 폴백(현 동작 유지). 테스트 env에서 URL 미설정→인덱스 미생성.
+- **커밋(브랜치 `hybrid-retrieval`):** `43387d4`(spec), `6391b58`(plan), `3bd80a1`(primitives), `72ad2cc`(index cache), `a4f1336`(hybrid_search), `1ad6b3a`(QueryAgent wiring), `4d1eda6`(graph.py 빌드 훅).
+- **검증:** `python3 -m pytest tests/ -q` → **373 passed**.
+- ⚠️ **미커밋 항목:** `projects.py _run_parse`의 parse-time 청크 인덱스 훅(7줄)은 작업 트리에만 존재. 사용자의 진행 중 작업(simulation 엔드포인트 등, `app.agents.simulation_agent` 미추적)이 같은 파일에 섞여 있어 분리 커밋하지 않음. 기능상 graph build 훅이 청크 인덱스도 재빌드하므로 무방. 사용자가 projects.py WIP과 함께 커밋 예정.
+- **다음:** 최종 코드 리뷰 subagent → `finishing-a-development-branch` → 개선점 #2(reconcile) spec.
 
 ## 2026-06-03 Phase 2b — Scheduled Digest Agent
 
