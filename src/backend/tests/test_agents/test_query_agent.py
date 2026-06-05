@@ -108,8 +108,10 @@ async def test_search_graph_name_match_scores_higher_than_description_match():
     import networkx as nx
     from app.agents.query_agent import QueryAgent
     g = nx.DiGraph()
-    g.add_node("Project:NLP", type="Project", name="NLP 프로젝트", description="builds models")
+    # Insert the description-only match FIRST so passing requires genuine score
+    # differentiation (name match > description match), not insertion order.
     g.add_node("Skill:Models", type="Skill", name="Models", description="NLP based models")
+    g.add_node("Project:NLP", type="Project", name="NLP 프로젝트", description="builds models")
     agent = QueryAgent()
     result = await agent._search_graph(g, "NLP")
     assert result["nodes"][0]["name"] == "NLP 프로젝트"

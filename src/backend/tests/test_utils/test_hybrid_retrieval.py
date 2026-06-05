@@ -99,3 +99,23 @@ async def test_hybrid_search_falls_back_when_embed_raises(tmp_path, monkeypatch)
     result = await hybrid_retrieval.hybrid_search(
         "python", pid, "chunks", items, top_n=5, embedder=Boom())
     assert result == ["a"]  # keyword-only fallback
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_drops_stale_ids_absent_from_items(tmp_path, monkeypatch):
+    # Index references an id ("gone") no longer in the current corpus; it must
+    # never leak into results, and the present keyword match must still surface.
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "BAAI/bge-m3")
+    pid = "pStale"
+    emb = tmp_path / pid / "embeddings"
+    emb.mkdir(parents=True)
+    np.save(emb / "chunks.npy", np.array([[1.0, 0.0], [0.9, 0.1]], dtype=np.float16))
+    (emb / "chunks_meta.json").write_text(json.dumps(
+        {"ids": ["gone", "a"], "model": "BAAI/bge-m3", "dim": 2}), encoding="utf-8")
+    items = {"a": "python", "b": "java"}
+    result = await hybrid_retrieval.hybrid_search(
+        "python", pid, "chunks", items, top_n=5,
+        embedder=_FakeEmbedder([1.0, 0.0]))
+    assert "gone" not in result
+    assert "a" in result

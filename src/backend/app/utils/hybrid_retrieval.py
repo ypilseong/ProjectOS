@@ -11,16 +11,18 @@ def _tokens(query: str) -> list[str]:
 
 
 def keyword_scores(query: str, items: dict[str, str]) -> dict[str, float]:
-    """Token-substring match count per item. Items with 0 matches are omitted.
+    """Token-substring occurrence count per item. Items with 0 matches omitted.
 
     Substring (not set intersection) matching handles Korean particles
-    (e.g. "Python을" still contains "python").
+    (e.g. "Python을" still contains "python"). Occurrences are counted (not
+    mere presence) so callers can weight a field by repeating it in the text
+    (the node search repeats `name` to keep the legacy name>description bias).
     """
     tokens = _tokens(query)
     scores: dict[str, float] = {}
     for item_id, text in items.items():
         text_lower = (text or "").lower()
-        score = sum(1.0 for t in tokens if t in text_lower)
+        score = sum(float(text_lower.count(t)) for t in tokens)
         if score > 0:
             scores[item_id] = score
     return scores

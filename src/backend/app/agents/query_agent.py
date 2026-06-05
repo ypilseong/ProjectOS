@@ -35,6 +35,8 @@ class QueryAgent:
             yield token
 
     async def _search_graph(self, graph: nx.DiGraph, query: str, project_id=None) -> dict:
+        if not query.strip():
+            return {"nodes": [], "edges": [], "related": []}
         items = {
             node_id: f"{data.get('name', '')} {data.get('name', '')} "
                      f"{data.get('description', '') or ''}"
