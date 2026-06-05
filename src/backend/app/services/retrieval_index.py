@@ -74,8 +74,10 @@ async def build_node_index(project_id: str) -> dict | None:
     return _write_index(project_id, "nodes", ids, vectors)
 
 
-def load_index(project_id: str, kind: str):
+def load_index(project_id: str | None, kind: str):
     """Return (matrix, ids) or None. None on missing/stale/corrupt index."""
+    if project_id is None:
+        return None
     npy = _emb_dir(project_id) / f"{kind}.npy"
     meta_path = _emb_dir(project_id) / f"{kind}_meta.json"
     if not npy.exists() or not meta_path.exists():

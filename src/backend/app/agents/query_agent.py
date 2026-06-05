@@ -7,6 +7,7 @@ from app.agents.obsidian_writer_agent import TYPE_TO_FOLDER, _safe_filename
 from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
 from app.utils.logger import get_logger
+from app.utils.hybrid_retrieval import hybrid_search
 
 logger = get_logger(__name__)
 
@@ -23,38 +24,33 @@ class QueryAgent:
         vault_path: str | None = None,
     ):
         """Async generator that yields LLM response tokens."""
-        context = self._search_graph(graph, question)
-        relevant_chunks = self._find_relevant_chunks(chunks, question)
+        project_id = Path(vault_path).name if vault_path else None
+        context = await self._search_graph(graph, question, project_id=project_id)
+        relevant_chunks = await self._find_relevant_chunks(
+            chunks, question, project_id=project_id)
         wiki_context = self._load_wiki_context(vault_path, question, context)
         prompt = self._build_prompt(question, context, relevant_chunks, wiki_context)
         logger.info(f"QueryAgent: streaming answer for '{question[:50]}'")
         async for token in self._llm.stream([{"role": "user", "content": prompt}]):
             yield token
 
-    def _search_graph(self, graph: nx.DiGraph, query: str) -> dict:
-        query_lower = query.lower()
-        query_tokens = [t for t in query_lower.split() if len(t) > 1]
-
-        scored: list[tuple[float, dict]] = []
-        for node_id, data in graph.nodes(data=True):
-            name = data.get("name", "")
-            desc = data.get("description", "") or ""
-            name_lower = name.lower()
-            desc_lower = desc.lower()
-
-            name_score = sum(2.0 for t in query_tokens if t in name_lower)
-            desc_score = sum(1.0 for t in query_tokens if t in desc_lower)
-            total = name_score + desc_score
-            if total > 0:
-                scored.append((total, {
-                    "id": node_id,
-                    "type": data.get("type"),
-                    "name": name,
-                    "description": desc,
-                }))
-
-        scored.sort(key=lambda x: -x[0])
-        matched_nodes = [item for _, item in scored[:10]]
+    async def _search_graph(self, graph: nx.DiGraph, query: str, project_id=None) -> dict:
+        items = {
+            node_id: f"{data.get('name', '')} {data.get('name', '')} "
+                     f"{data.get('description', '') or ''}"
+            for node_id, data in graph.nodes(data=True)
+        }
+        ranked_ids = await hybrid_search(
+            query, project_id, "nodes", items, top_n=10)
+        matched_nodes = [
+            {
+                "id": node_id,
+                "type": graph.nodes[node_id].get("type"),
+                "name": graph.nodes[node_id].get("name", ""),
+                "description": graph.nodes[node_id].get("description", "") or "",
+            }
+            for node_id in ranked_ids if node_id in graph
+        ]
 
         node_ids = {n["id"] for n in matched_nodes}
         connected_edges = []
@@ -80,18 +76,13 @@ class QueryAgent:
 
         return {"nodes": matched_nodes, "edges": connected_edges, "related": bfs_nodes}
 
-    def _find_relevant_chunks(self, chunks: list[TextChunk], query: str) -> list[str]:
+    async def _find_relevant_chunks(self, chunks: list[TextChunk], query: str, project_id=None) -> list[str]:
         if not query.strip():
             return []
-        query_words = [w.lower() for w in query.split()]
-        scored = []
-        for chunk in chunks:
-            text_lower = chunk.text.lower()
-            score = sum(1 for w in query_words if w in text_lower)
-            if score > 0:
-                scored.append((score, chunk.text))
-        scored.sort(reverse=True)
-        return [text for _, text in scored[:3]]
+        items = {c.chunk_id: c.text for c in chunks}
+        ranked_ids = await hybrid_search(
+            query, project_id, "chunks", items, top_n=3)
+        return [items[cid] for cid in ranked_ids if cid in items]
 
     def _load_wiki_context(self, vault_path: str | None, query: str, context: dict) -> dict:
         if not vault_path:
