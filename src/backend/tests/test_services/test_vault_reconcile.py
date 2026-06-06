@@ -154,3 +154,36 @@ def test_diff_excludes_category_nodes_from_deletion(reconcile_env, tmp_path):
     patch = diff_vault_against_graph(pid)
     dels = {(n["type"], n["name"]) for n in patch["nodes_delete"]}
     assert ("Category", "Skills") not in dels
+
+
+from app.services.vault_reconcile import reconcile_vault
+
+
+def _load_graph_for_test(path: Path) -> nx.DiGraph:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    return nx.node_link_graph(data)
+
+
+def test_reconcile_dry_run_does_not_mutate_graph(reconcile_env):
+    pid, vault, _ = reconcile_env
+    _page(vault, "Skills", "Python", "Skill", "변경된 설명")
+    graph_path = Path(config.PROJECTS_DIR) / pid / "graph.json"
+    before = graph_path.read_text(encoding="utf-8")
+    out = reconcile_vault(pid, apply=False)
+    assert out["applied"] is False
+    assert out["summary"]["nodes_update"] >= 1
+    assert "patch" in out
+    assert graph_path.read_text(encoding="utf-8") == before
+
+
+def test_reconcile_apply_persists_description_change(reconcile_env):
+    pid, vault, _ = reconcile_env
+    _page(vault, "Skills", "Python", "Skill", "변경된 설명")
+    _page(vault, "Projects", "OS", "Project", "graph builder",
+          "- USES_SKILL: [[Python]]\n")
+    out = reconcile_vault(pid, apply=True)
+    assert out["applied"] is True
+    g = _load_graph_for_test(Path(config.PROJECTS_DIR) / pid / "graph.json")
+    assert g.nodes["Skill:Python"]["description"] == "변경된 설명"

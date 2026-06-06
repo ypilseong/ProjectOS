@@ -213,3 +213,16 @@ def diff_vault_against_graph(project_id: str) -> dict:
                     })
 
     return patch
+
+
+def reconcile_vault(project_id: str, apply: bool = False) -> dict:
+    patch = diff_vault_against_graph(project_id)
+    summary = {key: len(patch[key]) for key in patch}
+    if not apply:
+        logger.info(f"reconcile_vault dry-run for {project_id}: {summary}")
+        return {"project_id": project_id, "applied": False,
+                "patch": patch, "summary": summary}
+    result = apply_project_graph_patch(project_id, patch)
+    logger.info(f"reconcile_vault applied for {project_id}: {result['changes']}")
+    return {"project_id": project_id, "applied": True,
+            "patch": patch, "summary": summary, "result": result}
