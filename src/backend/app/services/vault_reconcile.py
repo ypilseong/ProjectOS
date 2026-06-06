@@ -65,3 +65,151 @@ def parse_vault_page(path: Path) -> dict | None:
                                 "direction": "out", "other": m_out.group(2).strip()})
     return {"type": ntype, "name": name, "description": overview,
             "connections": connections}
+
+
+def _load_graph(graph_path: Path) -> nx.DiGraph:
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    return nx.node_link_graph(data)
+
+
+def _rendered_graph(graph: nx.DiGraph) -> nx.DiGraph:
+    g = graph.copy()
+    g, _ = demote_project_context_nodes(g)
+    g, _ = build_entity_details(g)
+    return g
+
+
+def _read_vault_pages(vault: Path) -> dict[tuple[str, str], dict]:
+    pages: dict[tuple[str, str], dict] = {}
+    for folder in set(TYPE_TO_FOLDER.values()) | {"Misc"}:
+        d = vault / folder
+        if not d.is_dir():
+            continue
+        for md in sorted(d.glob("*.md")):
+            parsed = parse_vault_page(md)
+            if parsed:
+                pages[(parsed["type"], parsed["name"])] = parsed
+    return pages
+
+
+def _rendered_pages(rendered: nx.DiGraph) -> dict[tuple[str, str], dict]:
+    pages: dict[tuple[str, str], dict] = {}
+    for node_id, data in rendered.nodes(data=True):
+        if data.get("type") == "Category":
+            continue
+        name = data.get("name")
+        if not name:
+            continue
+        pages[(data.get("type"), name)] = {
+            "id": node_id,
+            "description": data.get("description", "") or "",
+        }
+    return pages
+
+
+def _rendered_edges(rendered: nx.DiGraph) -> set[tuple[str, str, str]]:
+    edges: set[tuple[str, str, str]] = set()
+    for u, v, d in rendered.edges(data=True):
+        un = rendered.nodes[u].get("name")
+        vn = rendered.nodes[v].get("name")
+        if not un or not vn:
+            continue
+        if (rendered.nodes[u].get("type") == "Category"
+                and rendered.nodes[v].get("type") == "Category"):
+            continue
+        edges.add((un, vn, str(d.get("relation", "")).strip().upper()))
+    return edges
+
+
+def _vault_edges(pages: dict[tuple[str, str], dict]) -> set[tuple[str, str, str]]:
+    edges: set[tuple[str, str, str]] = set()
+    for (_t, pname), parsed in pages.items():
+        for c in parsed["connections"]:
+            rel = str(c["relation"]).strip().upper()
+            if c["direction"] == "out":
+                edges.add((pname, c["other"], rel))
+            else:
+                edges.add((c["other"], pname, rel))
+    return edges
+
+
+def _name_index(graph: nx.DiGraph) -> dict[str, list[str]]:
+    idx: dict[str, list[str]] = {}
+    for nid, data in graph.nodes(data=True):
+        nm = data.get("name")
+        if nm:
+            idx.setdefault(nm, []).append(nid)
+    return idx
+
+
+def diff_vault_against_graph(project_id: str) -> dict:
+    graph_path = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    if not graph_path.exists():
+        raise ValueError("Graph not built yet")
+    vault = Path(config.VAULT_DIR) / project_id
+
+    graph = _load_graph(graph_path)
+    rendered = _rendered_graph(graph)
+
+    expected = _rendered_pages(rendered)
+    vault_pages = _read_vault_pages(vault) if vault.is_dir() else {}
+    g_nodes = {
+        (data.get("type"), data.get("name")): nid
+        for nid, data in graph.nodes(data=True)
+        if data.get("name")
+    }
+    name_idx = _name_index(graph)
+    new_names = {nm for (_t, nm) in vault_pages if (_t, nm) not in g_nodes}
+
+    patch: dict = {
+        "nodes_add": [], "nodes_update": [], "nodes_delete": [],
+        "edges_add": [], "edges_delete": [],
+    }
+
+    for key, parsed in vault_pages.items():
+        if key in expected and key in g_nodes:
+            current = graph.nodes[g_nodes[key]].get("description", "") or ""
+            if parsed["description"] != current:
+                patch["nodes_update"].append({
+                    "type": key[0], "name": key[1],
+                    "set": {"description": parsed["description"]},
+                })
+        elif key not in expected and key not in g_nodes:
+            patch["nodes_add"].append({
+                "type": key[0], "name": key[1],
+                "description": parsed["description"],
+            })
+
+    for key in expected:
+        if key not in vault_pages and key in g_nodes:
+            patch["nodes_delete"].append({"type": key[0], "name": key[1]})
+
+    rendered_e = _rendered_edges(rendered)
+    vault_e = _vault_edges(vault_pages)
+
+    def _unique(nm: str) -> bool:
+        return len(name_idx.get(nm, [])) == 1
+
+    def _resolvable(nm: str) -> bool:
+        return _unique(nm) or nm in new_names
+
+    for (sn, tn, rel) in (vault_e - rendered_e):
+        if _resolvable(sn) and _resolvable(tn):
+            patch["edges_add"].append({
+                "source_name": sn, "target_name": tn,
+                "relation": rel, "confidence": 1.0,
+            })
+
+    for (sn, tn, rel) in (rendered_e - vault_e):
+        if _unique(sn) and _unique(tn):
+            su, tv = name_idx[sn][0], name_idx[tn][0]
+            if graph.has_edge(su, tv):
+                existing = str(graph.edges[su, tv].get("relation", "")).strip().upper()
+                if existing == rel:
+                    patch["edges_delete"].append({
+                        "source_name": sn, "target_name": tn, "relation": rel,
+                    })
+
+    return patch
