@@ -56,15 +56,29 @@ parse_vault_page(path: Path) -> dict | None
 diff_vault_against_graph(project_id: str) -> dict
 ```
 
-vault 디렉터리의 모든 엔티티 페이지를 파싱하고 그래프와 비교해 `graph_patch` 형식 패치를 만든다:
+vault 디렉터리의 모든 엔티티 페이지를 파싱하고 그래프와 비교해 `graph_patch` 형식 패치를 만든다.
 
-- **description 변경** → `nodes_update` 항목 `{type, name, set: {description}}`
-- **vault에만 있는 연결** → `edges_add` 항목 `{source_name, target_name, relation, confidence}`
-- **page 없는 그래프 노드** → `nodes_delete`
-- **그래프에 없는 `.md` 페이지** → `nodes_add` 항목 `{type, name, description}`
-- **edge 삭제** → **union 의미론**: source 페이지의 successor 목록과 target 페이지의 predecessor 목록 **양쪽 모두**에 없을 때만 `edges_delete` 방출. 한쪽 페이지만 편집된 상태에서의 거짓 삭제 방지.
+**렌더링 인지(render-aware) 비교 — 정확도 핵심:** `ObsidianWriterAgent.build_payload`는 그래프를 그대로 렌더링하지 않는다. 페이지를 만들기 전에 `demote_project_context_nodes`(일부 프로젝트 컨텍스트 leaf 노드를 그래프에서 **제거**하고 합성 Skill 노드/간선을 추가)와 `build_entity_details`를 적용한다. 또한 `Category` 타입 노드와 이름 없는 노드는 페이지로 렌더되지 않는다. 따라서 **원시 `graph.json`과 vault를 직접 비교하면** 강등(demote)된 노드가 거짓 `nodes_delete`로, 합성 노드/간선이 거짓 차이로 나타난다.
 
-연결의 양방향 표현(out/in)을 정규화해 (source, target, relation) 유향 간선 집합으로 환원한 뒤 그래프 간선 집합과 비교한다.
+해결: differ는 두 그래프를 구분한다.
+- **G** = 실제 `graph.json` (패치 적용 대상, source of truth).
+- **R** = `build_entity_details(demote_project_context_nodes(G.copy()))` — 사용자가 실제로 본 페이지 집합을 산출하는 *렌더링된* 그래프. demote/details는 G를 영속화하지 않으므로 G.copy()에 적용한다.
+
+vault는 **R**과 비교해 "사용자가 무엇을 바꿨는가"를 판정하고, 패치 항목은 **G**를 대상으로 하되 G에 안전하게 적용 가능한 것만 방출한다(보수적 가드).
+
+기대 페이지 집합 = R의 비-Category·이름 있는 노드의 `(type, name)`.
+
+- **description 변경** → `(type,name) ∈ (vault ∩ 기대페이지 ∩ G)`에서 vault Overview와 G 노드 description이 다르면 `nodes_update` 항목 `{type, name, set: {description}}`.
+- **vault에만 있는 연결** → `edges_add` 항목 `{source_name, target_name, relation, confidence}`. 단 양 끝 이름이 **G에서 유일하게 resolve**될 때만 방출(미해결/모호 시 skip).
+- **page 없는 기대 노드** → `nodes_delete`. 단 해당 `(type,name)`이 **G에 실재**할 때만(강등 노드는 기대 집합에 없으므로 자동 제외).
+- **R에도 G에도 없는 `.md` 페이지** → `nodes_add` 항목 `{type, name, description}`.
+- **edge 삭제** → R의 렌더 간선 중 vault에 없는 것. 단 이름으로 resolve한 **직접 간선이 G에 실재**할 때만 `edges_delete` 방출. Category를 경유해 평탄화된 간선이나 demote 합성 간선(G에 직접 존재하지 않음)은 건드리지 않는다(보수적).
+
+**렌더 간선 집합** = R의 모든 간선 `(u,v,rel)` 중 `u.name`·`v.name`이 존재하고 둘 중 하나 이상이 비-Category인 것. 이름 기준 `(source_name, target_name, relation_upper)` 유향 집합으로 환원.
+
+**vault 간선 집합** = 각 페이지의 `## Connections` 라인을 정규화: `out` → `(page_name, other, rel)`, `in` → `(other, page_name, rel)`. relation은 대문자 정규화. 같은 간선은 양쪽 페이지에서 중복 표현되므로 집합으로 dedup된다.
+
+**Union 의미론(거짓 삭제 방지):** A→B 간선은 A 페이지(out)와 B 페이지(in) 양쪽에 렌더된다. 사용자가 한쪽 페이지에서만 줄을 지워도 다른 페이지 표현이 vault 집합에 남으므로 삭제 후보가 되지 않는다. 양쪽 모두에서 사라졌을 때만 `edges_delete` 후보가 된다 — 집합 차분 `렌더간선 − vault간선`이 자연히 이 의미를 구현한다.
 
 ### 3. Orchestrator
 
@@ -115,8 +129,10 @@ graph.json ──load──> NetworkX ──────────┐ │
 5. differ — vault에만 있는 연결 시 edges_add.
 6. differ — union 의미론: 한쪽 페이지에서만 사라진 간선은 삭제 안 함.
 7. differ — 양쪽에서 사라진 간선은 edges_delete.
-8. differ — page 없는 그래프 노드 → nodes_delete.
+8. differ — page 없는 기대 노드 → nodes_delete.
 9. differ — 그래프에 없는 새 .md → nodes_add.
+9b. differ — Category 노드는 nodes_delete 후보에서 제외.
+9c. differ — demote 강등 노드(페이지 없음·그래프에서 제거됨)는 거짓 nodes_delete를 만들지 않음.
 10. `reconcile_vault(apply=False)` — 그래프 불변, patch/summary 반환.
 11. `reconcile_vault(apply=True)` — apply_project_graph_patch 호출.
 12. API 엔드포인트 — dry-run 기본, apply 쿼리 파라미터.
