@@ -10,7 +10,7 @@ Last updated: 2026-06-06
 **개선점 우선순위:**
 1. **(완료) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
 2. **(완료) Vault 수동 편집 → 그래프 역반영(reconcile)** — vault 페이지 역파싱 + render-aware diff → graph_patch, dry-run/apply. spec: `docs/superpowers/specs/2026-06-06-vault-reconcile-design.md`.
-3. "Hot cache"(claude-obsidian `hot.md`) 부재 — MCP 세션 진입용 압축 컨텍스트.
+3. **(완료) Hot cache**(claude-obsidian `hot.md`) — MCP 세션 진입용 압축 컨텍스트. spec: `docs/superpowers/specs/2026-06-06-hot-cache-design.md`.
 4. 출처 인용 강제화(현재 프롬프트 권유만).
 5. 능동적 지식 보강(autoresearch) — 고립 노드/약점 자동 채움.
 - (#6 제외) transport 자동감지: 도메인 파이프라인상 백엔드 상주 불가피, 사용자 제외.
@@ -39,6 +39,17 @@ Last updated: 2026-06-06
 - **검증:** `python3 -m pytest tests/ -q` → **391 passed** (reconcile 단위 13 + 엔드포인트 2 + MCP 2 포함).
 - **비범위(YAGNI):** rename/retype 감지, 파일 와처 자동 트리거, 프로필/Sources 역파싱.
 - **다음:** 개선점 #3 (Hot cache — MCP 세션 진입용 압축 컨텍스트, claude-obsidian `hot.md` 대응).
+
+**#3 Hot cache — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **신규 모듈** `app/services/hot_context.py`:
+  - `compose_hot_context(graph, project_id=None, recent_log=None, top_n=5, recent_n=5)` — **렌더 그래프**(demote+details 적용본)를 입력 가정. persona(최고 차수 Person), hubs_by_type(타입별 허브, Person/Category 제외), recent_activity(log `## ` 헤더 꼬리), gaps(고립 노드), stats(비-Category 노드/엣지/타입 카운트)를 결정적으로 조립. 순수 함수(파일 I/O 없음).
+  - `render_hot_markdown(ctx)` — 위키링크 포함 마크다운. 빈 섹션은 "- (없음)".
+- **Writer 통합:** `ObsidianWriterAgent.run()`이 `write_payload` 후 `_write_hot(vault, graph, project_id)` 호출 → demote+details 재유도해 렌더 그래프 얻고, `log.md`가 갱신된 뒤라 이번 빌드가 recent_activity에 포함됨. best-effort try/except로 빌드 무중단. spec의 `VaultPayload.rendered_graph` 필드 제안은 pydantic arbitrary_types 회피 위해 run()에서 재유도로 대체.
+- **MCP 도구(⚠️ 미커밋):** `projectos_get_hot_context(project_id)` — `_load_graph`+`vault_reconcile._rendered_graph`로 렌더 그래프 얻고 `log.md` 꼬리 읽어 조립, `_text_result(markdown, ctx)` 반환. `mcp_tools.py`/`test_mcp_api.py`에 사용자 WIP가 섞여 있어 **분리 커밋하지 않음**(#1/#2와 동일 정책). 사용자가 본인 WIP과 함께 커밋 예정.
+- **커밋(브랜치 `hybrid-retrieval`):** `3542b11`(spec), `4c2a675`(plan), `4d92fc0`(composer), `d38ccb5`(renderer), `3a25d8e`(writer hot.md 생성). MCP 도구+그 테스트는 working tree에만 존재.
+- **검증:** `python3 -m pytest tests/ -q` → **407 passed** (hot_context 단위 11 + writer 2 + MCP 3 포함).
+- **비범위(YAGNI):** LLM 요약, hot.md 수동 편집 역반영, 세션 외 자동 푸시, 차수 외 중요도 점수.
+- **다음:** 개선점 #4 (출처 인용 강제화).
 
 ## 2026-06-03 Phase 2b — Scheduled Digest Agent
 
