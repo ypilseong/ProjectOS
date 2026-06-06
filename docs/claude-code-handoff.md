@@ -51,6 +51,22 @@ Last updated: 2026-06-06
 - **비범위(YAGNI):** LLM 요약, hot.md 수동 편집 역반영, 세션 외 자동 푸시, 차수 외 중요도 점수.
 - **다음:** 개선점 #4 (출처 인용 강제화).
 
+**#4 출처 인용 강제화 — 조사 단계 (미착수, spec 전):**
+- **현 상태 진단:** `QueryAgent._build_prompt`(`app/agents/query_agent.py:199`)가 출처 인용을 **권유만** 한다("가능하면 ... 출처 파일/청크를 함께 언급하세요"). 강제 아님.
+- **핵심 결함:** `_find_relevant_chunks`(`query_agent.py:81-87`)가 청크를 **출처 라벨 없이 본문(`items[cid]`)만** 프롬프트에 전달한다. 모델이 인용하려 해도 컨텍스트에 `chunk_id`나 `source_file`이 없어 근거를 지목할 수 없다. 노드 역시 `_search_graph`가 `source_files`를 컨텍스트에 포함하지 않음.
+- **가용 provenance 자산:** `TextChunk`(`app/models/graph.py:6`)에 `chunk_id`, `source_file`, `file_type`, `page_num`, `char_offset` 존재. 그래프 노드는 `source_files` 리스트 보유(`graph_builder_agent.py:279-281`에서 누적). vault 페이지엔 `## Sources` 섹션 렌더됨. → 인용에 필요한 메타데이터는 이미 데이터에 존재하나 **프롬프트 컨텍스트로 전달되지 않는 것**이 병목.
+- **유력 접근(브레인스토밍에서 확정 필요):** (1) `_find_relevant_chunks`가 `(source_file[, page_num])` 라벨을 청크 본문에 prefix해 전달, `_search_graph`가 노드에 `source_files` 부착; (2) 프롬프트를 "권유"에서 "각 주장에 `[source_file]` 인용 필수, 근거 없으면 '출처 불명' 명시"로 강화; (3) 선택적으로 응답 후 인용 검증(언급된 source_file이 실제 컨텍스트에 있었는지) — YAGNI 후보.
+- **다음 단계:** brainstorming 스킬로 접근 확정 → spec(`docs/superpowers/specs/2026-06-XX-enforced-citations-design.md`) → plan → subagent TDD. (이번 세션에서 조사까지만 진행, 사용자 지시로 중단.)
+
+## 미커밋 이월 항목 (working tree, 브랜치 `hybrid-retrieval`)
+
+다음 변경은 사용자의 진행 중 WIP(simulation/inbox/google 등)와 같은 파일에 섞여 있어 **의도적으로 미커밋** 상태로 남김. 사용자가 본인 WIP과 함께 커밋 예정:
+- **#1 parse-time 청크 인덱스 훅** — `app/api/projects.py`.
+- **#2 reconcile 배선** — `app/api/projects.py`(`POST /projects/{id}/reconcile`), `app/mcp_tools.py`(`projectos_reconcile_vault`) + 테스트(`test_projects_api.py`, `test_mcp_api.py`).
+- **#3 hot context MCP 도구** — `app/mcp_tools.py`(`projectos_get_hot_context`) + 테스트(`test_mcp_api.py`).
+
+서비스/유닛 모듈(hybrid_retrieval, vault_reconcile, hot_context)과 그 단위 테스트는 모두 깨끗이 커밋됨. 전체 백엔드 테스트 **407 passed**(미커밋 배선 포함 시).
+
 ## 2026-06-03 Phase 2b — Scheduled Digest Agent
 
 **What:** Deterministic daily digest per built project → `vault/<id>/Digests/YYYY-MM-DD.md`.
