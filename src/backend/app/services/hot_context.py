@@ -85,3 +85,56 @@ def compose_hot_context(
             "by_type": by_type,
         },
     }
+
+
+def render_hot_markdown(ctx: dict) -> str:
+    pid = ctx.get("project_id") or "(unknown)"
+    lines = [
+        f"# Hot Context — {pid}",
+        "",
+        "_Auto-generated session primer. Do not edit manually._",
+        "",
+        "## 주요 인물",
+    ]
+    if ctx["persona"]:
+        for p in ctx["persona"]:
+            desc = f" — {p['description']}" if p["description"] else ""
+            lines.append(f"- [[{p['name']}]] (deg {p['degree']}){desc}")
+    else:
+        lines.append("- (없음)")
+
+    lines += ["", "## 핵심 엔티티"]
+    if ctx["hubs_by_type"]:
+        for ntype in sorted(ctx["hubs_by_type"]):
+            lines.append(f"### {ntype}")
+            for h in ctx["hubs_by_type"][ntype]:
+                lines.append(f"- [[{h['name']}]] (deg {h['degree']})")
+    else:
+        lines.append("- (없음)")
+
+    lines += ["", "## 최근 활동"]
+    if ctx["recent_activity"]:
+        for entry in ctx["recent_activity"]:
+            lines.append(f"- {entry.lstrip('# ').strip()}")
+    else:
+        lines.append("- (없음)")
+
+    lines += ["", "## 공백 (연결 보강 후보)"]
+    if ctx["gaps"]:
+        for g in ctx["gaps"]:
+            lines.append(f"- [[{g['name']}]] ({g['type']})")
+    else:
+        lines.append("- (없음)")
+
+    stats = ctx["stats"]
+    by_type = ", ".join(
+        f"{t}: {c}" for t, c in sorted(stats["by_type"].items())
+    ) or "(없음)"
+    lines += [
+        "",
+        "## 요약",
+        f"- Nodes: {stats['total_nodes']}, Edges: {stats['total_edges']}",
+        f"- {by_type}",
+        "",
+    ]
+    return "\n".join(lines)

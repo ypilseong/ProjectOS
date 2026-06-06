@@ -1,6 +1,7 @@
 import networkx as nx
 
 from app.services.hot_context import compose_hot_context
+from app.services.hot_context import render_hot_markdown
 
 
 def _graph() -> nx.DiGraph:
@@ -99,3 +100,28 @@ def test_empty_graph():
     assert ctx["gaps"] == []
     assert ctx["recent_activity"] == []
     assert ctx["stats"]["total_nodes"] == 0
+
+
+def test_render_sections_and_wikilinks():
+    ctx = compose_hot_context(_graph(), project_id="proj")
+    md = render_hot_markdown(ctx)
+    assert "# Hot Context — proj" in md
+    assert "## 주요 인물" in md
+    assert "## 핵심 엔티티" in md
+    assert "## 공백" in md
+    assert "## 요약" in md
+    assert "[[Alice]]" in md
+    assert "[[ProjectOS]]" in md
+    assert "[[Rust]]" in md  # isolated node
+
+
+def test_render_empty_sections_show_none():
+    ctx = compose_hot_context(nx.DiGraph(), project_id="empty")
+    md = render_hot_markdown(ctx)
+    assert "## 주요 인물" in md
+    assert "- (없음)" in md
+
+
+def test_render_is_deterministic():
+    ctx = compose_hot_context(_graph(), project_id="proj")
+    assert render_hot_markdown(ctx) == render_hot_markdown(ctx)
