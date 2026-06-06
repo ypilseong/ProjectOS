@@ -1,6 +1,6 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-05
+Last updated: 2026-06-06
 
 ## 2026-06-05 claude-obsidian 비교 개선 (진행 중)
 
@@ -9,7 +9,7 @@ Last updated: 2026-06-05
 
 **개선점 우선순위:**
 1. **(완료) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
-2. **(다음)** Vault 수동 편집 → 그래프 역반영(reconcile) 경로 부재.
+2. **(완료) Vault 수동 편집 → 그래프 역반영(reconcile)** — vault 페이지 역파싱 + render-aware diff → graph_patch, dry-run/apply. spec: `docs/superpowers/specs/2026-06-06-vault-reconcile-design.md`.
 3. "Hot cache"(claude-obsidian `hot.md`) 부재 — MCP 세션 진입용 압축 컨텍스트.
 4. 출처 인용 강제화(현재 프롬프트 권유만).
 5. 능동적 지식 보강(autoresearch) — 고립 노드/약점 자동 채움.
@@ -27,6 +27,18 @@ Last updated: 2026-06-05
 - **검증:** `python3 -m pytest tests/ -q` → **374 passed**.
 - ⚠️ **미커밋 항목:** `projects.py _run_parse`의 parse-time 청크 인덱스 훅(7줄)은 작업 트리에만 존재. 사용자의 진행 중 작업(simulation 엔드포인트 등, `app.agents.simulation_agent` 미추적)이 같은 파일에 섞여 있어 분리 커밋하지 않음. 기능상 graph build 훅이 청크 인덱스도 재빌드하므로 무방. 사용자가 projects.py WIP과 함께 커밋 예정.
 - **다음:** 최종 코드 리뷰 subagent → `finishing-a-development-branch` → 개선점 #2(reconcile) spec.
+
+**#2 Vault reconcile — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **신규 모듈** `app/services/vault_reconcile.py`:
+  - `parse_vault_page(path)` — frontmatter `type`/`name`, `## Overview`→description("(설명 없음)"→빈 문자열), `## Connections` 라인(`- rel: [[t]]`=out, `- ← rel: [[s]]`=in) 역파싱. frontmatter 없으면 None.
+  - `diff_vault_against_graph(project_id)` — **render-aware diff**. 실제 `graph.json`(G)을 직접 비교하지 않고, writer와 동일한 변형을 적용한 렌더 그래프 `R = build_entity_details(demote_project_context_nodes(G.copy()))`과 vault를 비교. demote는 일부 노드를 그래프에서 제거+합성 Skill을 추가하고 Category/무명 노드는 페이지가 없으므로, 직접 비교 시 거짓 nodes_delete가 발생하기 때문. 패치는 G에 보수적으로 방출(이름이 G에서 유일 resolve될 때만, 삭제는 직접 간선이 G에 실재할 때만).
+  - `reconcile_vault(project_id, apply=False)` — dry-run은 `{patch, summary}` 반환·무변경, apply=True는 `apply_project_graph_patch` 호출.
+- **패치 의미론:** description 변경→nodes_update / vault-only 연결→edges_add / page 없는 기대 노드→nodes_delete(Category·강등 노드 제외) / 새 .md→nodes_add / **union 의미론** 간선 삭제(A→B는 양쪽 페이지에 렌더되므로 양쪽에서 모두 사라졌을 때만 삭제 후보 = 집합차분 `렌더간선−vault간선`).
+- **연결(⚠️ 미커밋):** `POST /projects/{id}/reconcile?apply=` 엔드포인트(`app/api/projects.py`)와 `projectos_reconcile_vault` MCP 도구(`app/mcp_tools.py`)를 추가했으나, 두 파일과 해당 테스트 파일(`tests/test_api/test_projects_api.py`, `tests/test_api/test_mcp_api.py`)에 사용자의 미커밋 WIP가 섞여 있어 **분리 커밋하지 않음**(parse-time 훅과 동일 정책). 사용자가 본인 WIP과 함께 커밋 예정. 서비스 모듈+단위 테스트는 깨끗이 커밋됨.
+- **커밋(브랜치 `hybrid-retrieval`):** `87b43a5`(spec), 이후 render-aware 보강 커밋, plan 커밋, `ba0eeb8`(파서), `f10bf1c`(differ), `a2248f7`(orchestrator). 엔드포인트/MCP/그 테스트는 working tree에만 존재.
+- **검증:** `python3 -m pytest tests/ -q` → **391 passed** (reconcile 단위 13 + 엔드포인트 2 + MCP 2 포함).
+- **비범위(YAGNI):** rename/retype 감지, 파일 와처 자동 트리거, 프로필/Sources 역파싱.
+- **다음:** 개선점 #3 (Hot cache — MCP 세션 진입용 압축 컨텍스트, claude-obsidian `hot.md` 대응).
 
 ## 2026-06-03 Phase 2b — Scheduled Digest Agent
 
