@@ -1,6 +1,42 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-06
+Last updated: 2026-06-08
+
+## 2026-06-08 토큰 절약 조회 도구 검증 + node_context evidence opt-in
+
+**배경:** 사용자 요청 — 최근 업데이트가 효율적·정확하게 구현됐는지 검증하고, 다음 개선을 진행.
+
+**검증 결과:** `python3 -m pytest tests/ -q` → **437 passed**(작업 전 baseline, 미커밋 코드 포함).
+핵심 모듈(hybrid_retrieval/retrieval_index/query_agent/citation_validator) 코드 리뷰 — 폴백 불변식
+견고, 결정적 로직, float16 인덱스로 메모리 효율. 정확성 갭 1건 식별: citation 검증은 사후일 뿐
+hallucination 차단/재생성은 안 함(#4 비범위, 의도됨).
+
+**발견:** 핸드오프가 다음 후보로 지목한 "token 절약 subgraph/node-context 도구"는 **이미 미커밋
+WIP로 구현·테스트(6 passed)되어 있었음** — `app/services/graph_context.py`
+(`summarize_graph_context`/`get_node_context`/`get_subgraph_context`) + MCP 도구 3종
+(`projectos_get_graph_summary`/`get_node_context`/`get_subgraph`) tools/list 등록·배선 완료.
+실제 인터페이스는 `node_name`+선택적 `node_type`, 정확 id/name 일치(substring 없음), 모호 시
+`match.ambiguous`+`match.ids` 반환. (당초 브레인스토밍 spec 초안과 달라 spec에 "구현 현황 정정" 추가.)
+
+**이번 작업(실질 델타):** `get_node_context`에 `include_evidence` opt-in 추가.
+- **서비스(커밋됨 `995dfad`):** `graph_context.get_node_context(..., evidence=None)` — 사전 조회된
+  evidence 리스트를 top-level `evidence` 키로 부착(`counts`엔 절대 안 넣음 → 기존 strict-equality
+  테스트 불변). evidence 미지정 시 키 생략. 단위 테스트 3종 추가(9 passed).
+- **MCP 배선(⚠️ 미커밋, #1~#5 정책대로 사용자 WIP과 동거):** `projectos_get_node_context`에
+  `include_evidence`/`max_evidence` 인수 추가. include 시 chunks 로드 → `hybrid_search`(임베딩 없으면
+  키워드 폴백)로 top-k 청크 → `QueryAgent._chunk_source_label`로 `[file#chunk p.N char:off]` 라벨
+  부착(citation 라벨과 동일 포맷). tools/list 스키마도 갱신. `test_mcp_api.py`에 evidence 테스트 추가.
+- **검증:** `python3 -m pytest tests/ -q` → **441 passed**(437 + 서비스 3 + MCP 1).
+
+**spec/plan:** `docs/superpowers/specs/2026-06-08-token-saving-graph-context-tools-design.md`,
+`docs/superpowers/plans/2026-06-08-node-context-evidence-optin.md`.
+
+**비범위(YAGNI):** get_subgraph evidence, graph_summary evidence, hallucination 차단/재생성,
+evidence 항상 포함. subgraph/summary 도구 본체는 기존 WIP 유지(재작성 안 함).
+
+**다음 후보:** citation 강제화 강화(사후 검증→차단/재생성), `/ingest-url` web→clean-markdown ingest
+(defuddle 스킬), Obsidian format contract(Canvas/Bases/callout). 미커밋 WIP 전반(Google/Inbox/
+simulation/UI)의 기능 단위 커밋 정리도 권장.
 
 ## 2026-06-05 claude-obsidian 비교 개선 (진행 중)
 
@@ -11,8 +47,8 @@ Last updated: 2026-06-06
 1. **(완료) 하이브리드 검색** — QueryAgent가 substring 매칭만 사용. BGE-M3 임베딩 인프라가 쿼리 경로에서 미사용. → 키워드(sparse)+dense RRF 융합, 빌드 시 임베딩 캐시. spec: `docs/superpowers/specs/2026-06-05-hybrid-retrieval-design.md`.
 2. **(완료) Vault 수동 편집 → 그래프 역반영(reconcile)** — vault 페이지 역파싱 + render-aware diff → graph_patch, dry-run/apply. spec: `docs/superpowers/specs/2026-06-06-vault-reconcile-design.md`.
 3. **(완료) Hot cache**(claude-obsidian `hot.md`) — MCP 세션 진입용 압축 컨텍스트. spec: `docs/superpowers/specs/2026-06-06-hot-cache-design.md`.
-4. 출처 인용 강제화(현재 프롬프트 권유만).
-5. 능동적 지식 보강(autoresearch) — 고립 노드/약점 자동 채움.
+4. **(완료) 출처 인용 강제화** — QueryAgent가 chunk/node provenance를 프롬프트에 전달하고 사실 주장 인용을 필수화. spec: `docs/superpowers/specs/2026-06-06-enforced-citations-design.md`.
+5. **(완료) 능동적 지식 보강(autoresearch)** — 고립 노드/provenance 누락/약한 연결/중복 후보를 결정적으로 산출하는 read-only 보강 후보 도구. spec: `docs/superpowers/specs/2026-06-07-autoresearch-design.md`.
 - (#6 제외) transport 자동감지: 도메인 파이프라인상 백엔드 상주 불가피, 사용자 제외.
 
 **#1 하이브리드 검색 — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
@@ -51,12 +87,633 @@ Last updated: 2026-06-06
 - **비범위(YAGNI):** LLM 요약, hot.md 수동 편집 역반영, 세션 외 자동 푸시, 차수 외 중요도 점수.
 - **다음:** 개선점 #4 (출처 인용 강제화).
 
-**#4 출처 인용 강제화 — 조사 단계 (미착수, spec 전):**
-- **현 상태 진단:** `QueryAgent._build_prompt`(`app/agents/query_agent.py:199`)가 출처 인용을 **권유만** 한다("가능하면 ... 출처 파일/청크를 함께 언급하세요"). 강제 아님.
-- **핵심 결함:** `_find_relevant_chunks`(`query_agent.py:81-87`)가 청크를 **출처 라벨 없이 본문(`items[cid]`)만** 프롬프트에 전달한다. 모델이 인용하려 해도 컨텍스트에 `chunk_id`나 `source_file`이 없어 근거를 지목할 수 없다. 노드 역시 `_search_graph`가 `source_files`를 컨텍스트에 포함하지 않음.
-- **가용 provenance 자산:** `TextChunk`(`app/models/graph.py:6`)에 `chunk_id`, `source_file`, `file_type`, `page_num`, `char_offset` 존재. 그래프 노드는 `source_files` 리스트 보유(`graph_builder_agent.py:279-281`에서 누적). vault 페이지엔 `## Sources` 섹션 렌더됨. → 인용에 필요한 메타데이터는 이미 데이터에 존재하나 **프롬프트 컨텍스트로 전달되지 않는 것**이 병목.
-- **유력 접근(브레인스토밍에서 확정 필요):** (1) `_find_relevant_chunks`가 `(source_file[, page_num])` 라벨을 청크 본문에 prefix해 전달, `_search_graph`가 노드에 `source_files` 부착; (2) 프롬프트를 "권유"에서 "각 주장에 `[source_file]` 인용 필수, 근거 없으면 '출처 불명' 명시"로 강화; (3) 선택적으로 응답 후 인용 검증(언급된 source_file이 실제 컨텍스트에 있었는지) — YAGNI 후보.
-- **다음 단계:** brainstorming 스킬로 접근 확정 → spec(`docs/superpowers/specs/2026-06-XX-enforced-citations-design.md`) → plan → subagent TDD. (이번 세션에서 조사까지만 진행, 사용자 지시로 중단.)
+**#4 출처 인용 강제화 — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-06-enforced-citations-design.md`, `docs/superpowers/plans/2026-06-06-enforced-citations.md`.
+- **핵심 변경:** `QueryAgent._find_relevant_chunks`가 원본 본문만 넘기던 문제를 수정해 각 발췌 앞에 `[source_file#chunk_id p.N char:offset]` 라벨을 붙인다. 예: `[cv.pdf#id1 p.1 char:0]`.
+- **그래프 provenance:** `_search_graph` matched node와 related node에 `source_files`를 포함한다. `_build_prompt`는 노드 줄에 `[cv.pdf], [readme.md]` 형태로 source label을 렌더한다.
+- **프롬프트 강화:** 기존 "가능하면 출처 언급" 권유를 제거하고, 모든 사실 주장에 제공된 출처 라벨 인용 필수 / 컨텍스트에 없는 내용은 `출처 불명` 명시 / 제공된 라벨만 사용하도록 지시한다.
+- **테스트:** QueryAgent 테스트에 node `source_files` 보존, chunk source label, prompt citation contract 검증을 추가.
+- **검증:** `python3 -m pytest tests/test_agents/test_query_agent.py tests/test_agents/test_query_agent_hybrid.py -q` → **16 passed**. `python3 -m pytest tests/ -q` → **409 passed, 81 warnings**.
+- **비범위(YAGNI):** 스트리밍 응답 후 citation parser/validator, hallucinated citation 차단, simulation/report/graph patch citation 강제화.
+- **다음:** 개선점 #5 능동적 지식 보강(autoresearch) spec. 별도 후보로 `projectos-review-graph`/graph health 확장과 citation validator를 후속 검토 가능.
+
+**#5 능동적 지식 보강(autoresearch) — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-07-autoresearch-design.md`, `docs/superpowers/plans/2026-06-07-autoresearch.md`.
+- **신규 모듈:** `app/services/autoresearch.py` — `generate_autoresearch_candidates(graph, chunks=None, health=None, ...)`가 read-only candidate list를 결정적으로 반환.
+- **후보 종류:** duplicate pair는 `kind=review_needed`(priority 100), isolated node(priority 90), missing `source_files`(80), sparse important node(70), small weak component(60). Category/이름 없는 synthetic node는 제외. optional chunks/health로 source evidence를 보강.
+- **MCP 도구:** `projectos_get_research_candidates(project_id, max_candidates=20, min_degree=1, component_size_threshold=3)` 추가. graph+chunks+health를 읽어 `{project_id, candidates, summary}`를 structuredContent로 반환. **웹 검색/그래프 수정은 하지 않는 read-only 도구**.
+- **테스트:** `tests/test_services/test_autoresearch.py`에 isolated/missing-source/sparse/weak-component/duplicate/category exclusion/max/empty/evidence 테스트 추가. `test_mcp_api.py`에 tools/list 및 tool call 테스트 추가.
+- **검증:** `python3 -m pytest tests/test_services/test_autoresearch.py -q` → **6 passed**. `python3 -m pytest tests/test_api/test_mcp_api.py -q` → **34 passed, 33 warnings**. `python3 -m pytest tests/ -q` → **416 passed, 82 warnings**.
+- **비범위(YAGNI):** live web search/browser 실행, Google Drive/Gmail 자동 검색, LLM fact synthesis, graph patch 자동 적용, 사용자 확인 없는 source 추가.
+- **이후 완료된 후속:** `projectos-review-graph` workflow macro, citation validator, graph review 비교 실험 운영 절차 문서화, token 절약 graph context MCP 도구, Claude Desktop MCP instruction 개정, simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: `projectos-review-graph` workflow macro — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-07-graph-review-workflow-design.md`, `docs/superpowers/plans/2026-06-07-graph-review-workflow.md`.
+- **신규 모듈:** `app/services/graph_review.py` — `build_graph_review_workflow(graph, chunks=None, health=None, autoresearch_candidates=None, project_id=None, max_candidates=8)`가 read-only workflow payload를 결정적으로 반환.
+- **payload 내용:** `macro=projectos-review-graph`, `read_only=true`, graph/chunk/candidate input summary, `A_full_claude_review` vs `B_deterministic_prefilter_targeted_claude_review` mode 비교, evaluation metrics, ranked targeted candidates, checklist, next steps, token-saving guidance.
+- **MCP 도구:** `projectos_review_graph(project_id, max_candidates=8, min_degree=1, component_size_threshold=3)` 추가. graph+chunks+health+autoresearch 후보를 읽어 workflow structuredContent와 짧은 summary text를 반환한다. **웹 검색/LLM 호출/graph mutation 없음**.
+- **테스트:** `tests/test_services/test_graph_review.py`에 deterministic/read-only/payload contract/ranking tests 추가. `test_mcp_api.py`에 tools/list 및 tool call 테스트 추가.
+- **검증:** `python3 -m pytest tests/test_services/test_graph_review.py tests/test_services/test_autoresearch.py -q` → **10 passed**. `python3 -m pytest tests/test_api/test_mcp_api.py -q` → **35 passed, 34 warnings**.
+- **비범위(YAGNI):** Claude Desktop prompt file 생성, live web/browser search, graph patch 자동 생성/적용, simulation result schema/UI 변경.
+- **이후 완료된 후속:** citation validator, graph review 비교 실험 운영 절차 문서화, token 절약 graph context MCP 도구, Claude Desktop MCP instruction 개정, simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: citation validator — 완료 (브랜치 `hybrid-retrieval`, subagent TDD 실행):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-07-citation-validator-design.md`, `docs/superpowers/plans/2026-06-07-citation-validator.md`.
+- **신규 모듈:** `app/services/citation_validator.py` — `validate_citations(answer, allowed_labels, require_citation=True)`가 답변의 bracket citation을 결정적으로 검사한다.
+- **검증 내용:** 제공된 label만 사용했는지, unknown label이 있는지, citation 없는 문장 후보가 있는지, `출처 불명` marker 수를 산출한다. 반환에는 `valid`, `used_labels`, `unknown_labels`, `missing_citation_sentences`, `unsupported_count`, structured `summary`, `summary_text`가 포함된다.
+- **QueryAgent helper:** `collect_allowed_citation_labels(context, chunks, wiki_context)` 추가. node `source_files`, chunk label, wiki index/log/page bracket label, wiki `Sources` 섹션 파일명을 같은 label set으로 수집한다. 기존 prompt/stream token 동작은 유지.
+- **MCP 통합:** `projectos_query_career_graph` structuredContent에 `citation_report`와 `allowed_citation_labels`를 추가한다. 답변 text는 그대로 반환하고, validator 실패가 답변 생성을 막지는 않는다.
+- **테스트:** `tests/test_services/test_citation_validator.py`에 allowed/unknown/missing/출처 불명/deterministic/empty/require_citation tests 추가. QueryAgent label collection test와 MCP citation report test 추가.
+- **검증:** `python3 -m pytest tests/test_services/test_citation_validator.py tests/test_agents/test_query_agent.py tests/test_api/test_mcp_api.py -q` → **57 passed, 35 warnings**. `python3 -m pytest tests/test_agents/test_query_agent_hybrid.py -q` → **3 passed**.
+- **비범위(YAGNI):** Chat SSE 마지막 이벤트 citation report 추가, LLM 기반 fact-check, 답변 자동 rewrite/retry, simulation/report/graph patch citation enforcement.
+- **이후 완료된 후속:** graph review 비교 실험 운영 절차 문서화, token 절약 graph context MCP 도구, Claude Desktop MCP instruction 개정, simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: graph review 비교 실험 운영 절차 문서화 — 완료 (docs only):**
+- **spec/runbook:** `docs/superpowers/specs/2026-06-07-graph-review-comparison-experiment.md`.
+- **목적:** `A. full Claude review`와 `B. deterministic pre-filter + targeted Claude review`를 같은 rubric으로 비교해 targeted review 기본 채택 여부를 결정하는 운영 절차를 문서화.
+- **payload 연결:** B 모드 표준 입력을 `projectos_review_graph(project_id, max_candidates=8, min_degree=1, component_size_threshold=3)` structured payload로 고정. `macro=projectos-review-graph`, `read_only=true`, `evaluation_metrics`, `targeted_review_candidates`, `recommended_checklist`, `token_saving_guidance` 확인 절차 포함.
+- **핵심 내용:** 대상 프로젝트 선정, A/B 모드 정의, 입력/출력 artifact, 실행 순서, 평가 rubric/metrics, score sheet 양식, 전환 기준, 실패/중단 기준, token/context/evidence 주의사항, 비범위 정리.
+- **비범위:** Claude Desktop 자동화, MCP/code 추가, graph patch 자동 적용, Simulation/Inbox/Claude 검수 방향 코드 수정.
+- **검증:** `git diff --check -- docs/superpowers/specs/2026-06-07-graph-review-comparison-experiment.md docs/claude-code-handoff.md`.
+- **이후 완료된 후속:** token 절약 graph context MCP 도구, Claude Desktop MCP instruction 개정, simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: token 절약 graph context MCP 도구 — 완료 (브랜치 `hybrid-retrieval`, subagent service + main MCP wiring):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-07-token-saving-graph-context-tools-design.md`, `docs/superpowers/plans/2026-06-07-token-saving-graph-context-tools.md`.
+- **신규 모듈:** `app/services/graph_context.py` — `summarize_graph_context(graph, max_hubs=10)`, `get_node_context(graph, node_name, node_type=None, max_neighbors=20)`, `get_subgraph_context(graph, node_name, node_type=None, depth=1, max_nodes=25)`가 compact read-only payload를 결정적으로 반환.
+- **MCP 도구:** `projectos_get_graph_summary`, `projectos_get_node_context`, `projectos_get_subgraph` 추가. Claude Desktop이 full graph JSON 대신 요약, 특정 노드 1-hop context, bounded subgraph만 요청할 수 있게 한다.
+- **payload 내용:** `kind`, `read_only=true`, `project_id`, `counts`, `limits`, `source_files`, match metadata(`count`, `selected_id`, `ambiguous`, `ids`), directed in/out edge relation context.
+- **테스트:** `tests/test_services/test_graph_context.py`에 deterministic/read-only/no mutation/name-id-type matching/ambiguous/missing/subgraph limit tests 추가. `test_mcp_api.py`에 tools/list 및 세 MCP tool call 테스트 추가.
+- **검증:** `python3 -m pytest tests/test_services/test_graph_context.py -q` → **6 passed**. `python3 -m pytest tests/test_services/test_graph_context.py tests/test_api/test_mcp_api.py -q` → **43 passed, 36 warnings**.
+- **비범위:** Simulation 전용 delta/report-section 도구, Inbox/Google 변경, graph patch 생성/적용, full graph dump 대체 삭제.
+- **이후 완료된 후속:** Claude Desktop MCP instruction 개정, simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: Claude Desktop MCP instruction 개정 — 완료 (docs only, subagent 초안 + main 검수):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-07-claude-desktop-mcp-instructions.md`, `docs/superpowers/plans/2026-06-07-claude-desktop-mcp-instructions.md`.
+- **문서:** `docs/claude-desktop-mcp.md`의 Exposed Tools 목록을 실제 `list_mcp_tools()` 37개와 동기화했다.
+- **graph context 지침:** graph build 후 full graph JSON을 기본 요청하지 말고 `projectos_get_hot_context`/`projectos_get_graph_summary`를 먼저 보고, 필요할 때만 `projectos_get_node_context` 또는 `projectos_get_subgraph`를 요청하도록 명시.
+- **graph review 지침:** 품질 검수는 broad context 요청 전 `projectos_get_research_candidates` 또는 `projectos_review_graph`로 targeted review를 우선 사용하도록 정리.
+- **full JSON 제한:** `projectos_get_graph`는 export/debug/patch preparation 등 complete graph JSON이 실제로 필요한 경우로 제한.
+- **simulation 지침:** 현재 `projectos_get_simulation`은 큰 report를 반환할 수 있으므로 brief confirmation 또는 사용자 명시 요청에만 사용하고, 향후 delta/report-section 도구로 전환할 것을 명시.
+- **검증:** `list_mcp_tools()`와 docs tool list 비교 → missing/extra 없음. `git diff --check -- docs/claude-desktop-mcp.md docs/superpowers/specs/2026-06-07-claude-desktop-mcp-instructions.md docs/superpowers/plans/2026-06-07-claude-desktop-mcp-instructions.md docs/claude-code-handoff.md`.
+- **비범위:** backend code, Inbox/Google/Simulation code, simulation delta/report-section MCP 구현.
+- **이후 완료된 후속:** simulation result schema 재정의, simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현.
+
+**후속: simulation result schema 재정의 — 완료 (docs only):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-08-simulation-result-schema.md`, `docs/superpowers/plans/2026-06-08-simulation-result-schema.md`.
+- **현재 상태 확인:** `ProjectSimulationAgent`는 legacy flat result(`generated_at`, `query`, `personas`, `environment`, `timeline`, `graph_enhancements`, `cv_improvements`, `report`, `applied_graph_changes`)를 저장하고, Obsidian UI는 이 shape에 직접 의존한다.
+- **schema v2 방향:** `schema_version`, `project_id`, `run_id`, `status`, `started_at`, `completed_at`, `summary`, `workflow_steps`, `event_log`, `personas`, `environment`, `debate`, `graph_delta`, `report_sections`, `legacy`를 포함하는 versioned envelope로 정의했다.
+- **UI/Claude Desktop 계약:** workflow block, clickable step detail, debate timeline, graph delta highlight, report section tab rendering이 가능하도록 step/event/section/delta id와 evidence refs를 표준화했다.
+- **migration:** current legacy fields를 schema v2로 매핑하고, 첫 구현 단계에서는 existing UI 호환을 위해 legacy fields 또는 `legacy` object를 함께 유지하도록 명시했다.
+- **compact tool 준비:** 향후 `projectos_get_simulation_summary`, `projectos_get_simulation_graph_delta`, `projectos_get_simulation_report_section`, `projectos_get_simulation_event_log`의 입력 단위를 schema에서 바로 참조 가능하게 설계했다.
+- **비범위:** backend/API/UI code 변경, MCP 도구 추가, graph patch 적용 방식 변경, LLM prompt rewrite.
+- **이후 완료된 후속:** simulation UI spec 작성, simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현. 코드 구현으로 넘어갈 경우 관련 파일이 사용자 WIP와 겹치므로 시작 전 diff를 다시 확인해야 함.
+
+**후속: simulation UI spec 작성 — 완료 (docs only):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-08-simulation-ui.md`, `docs/superpowers/plans/2026-06-08-simulation-ui.md`.
+- **현재 UI 확인:** Obsidian `SimulationSection.svelte`는 legacy `Report / Agents / Timeline / CV` 탭과 `report`, `personas`, `timeline`, `cv_improvements`, `applied_graph_changes`에 직접 의존한다.
+- **target UI:** query/action row, live status, workflow strip, compact summary, `Report`, `Workflow`, `Agents`, `Debate`, `Graph Delta`, `Evidence` 탭으로 schema v2를 렌더링하는 구조를 정의했다.
+- **migration:** `schema_version !== "2.0"`인 legacy result는 pure view-model adapter가 report sections, debate rounds, graph change summary로 변환하도록 명시했다.
+- **graph delta review:** low-confidence/skipped/proposed deltas를 필터링하고 evidence refs와 related report section ids를 노출해 Claude Desktop이 전체 simulation payload 없이 선택 항목만 검수할 수 있게 설계했다.
+- **responsive/plugin 제약:** 좁은 Obsidian side pane에서 workflow block/tab/action row가 wrap되고 node id/source ref가 overflow 없이 표시되도록 CSS/레이아웃 원칙을 정리했다.
+- **비범위:** backend schema 구현, MCP token-saving tools, full graph canvas, automatic graph delta approval, legacy rendering 제거.
+- **이후 완료된 후속:** simulation token 절약 도구 설계. 남은 후보는 simulation schema 구현 또는 compact simulation tool 구현. 구현 작업은 backend/API/UI WIP와 겹치므로 시작 전 diff 재확인 필요.
+
+**후속: simulation token 절약 도구 설계 — 완료 (docs only):**
+- **spec/plan:** `docs/superpowers/specs/2026-06-08-simulation-token-saving-tools.md`, `docs/superpowers/plans/2026-06-08-simulation-token-saving-tools.md`.
+- **현재 MCP 확인:** `projectos_get_simulation(project_id)`는 `simulation.json` 전체를 text와 structuredContent로 반환한다. full export/debug에는 유지하되 기본 Claude Desktop workflow로는 부적합하다고 정리했다.
+- **compact tools:** `projectos_get_simulation_summary`, `projectos_get_simulation_graph_delta`, `projectos_get_simulation_report_section`, `projectos_get_simulation_event_log`, `projectos_get_simulation_evidence` 계약을 정의했다.
+- **legacy fallback:** schema v2가 아닌 현재 flat result도 summary/report section/event log/graph delta compact view로 best-effort 변환하도록 명시했다.
+- **service boundary:** future `app/services/simulation_context.py`에 deterministic adapter functions를 두고, MCP는 해당 service를 얇게 호출하는 구조로 설계했다.
+- **Claude Desktop workflow:** run simulation → summary → skipped/proposed delta 또는 selected report section → selected evidence 순서로 요청하고, `projectos_get_simulation`은 사용자 명시 요청/export/debug 때만 쓰도록 명시했다.
+- **비범위:** backend/MCP 구현, UI 구현, graph mutation, automatic delta approval, full source chunk dump.
+- **다음 후보:** simulation schema 구현, compact simulation tool 구현, 또는 paper ontology/chunking spec. 관련 backend/MCP/UI 파일에 사용자 WIP가 있으므로 시작 전 diff 재확인 필요.
+
+## 2026-06-08 Paper ontology / chunking 설계 메모
+
+사용자 우려: 논문에서 ontology를 만들면 기존 career/project graph와 상충되는 부분이 많고, 논문 고유 entity도 필요하다. 또한 논문은 길고 앞선 정의/문맥을 청크가 보지 못하면 entity extraction이 이상해질 가능성이 높다.
+
+### 판단
+
+- 우려가 타당하다. 논문 entity를 기존 career graph에 바로 병합하면 상충, 중복, 범용 개념 오염이 늘 수 있다.
+- 논문은 기존 ProjectOS career graph와 목적이 다른 지식 단위이므로 **source-scoped paper overlay graph**로 다루는 것이 안전하다.
+- 기존 graph와 겹치는 entity는 바로 merge하지 말고 `candidate_match` 또는 `CANDIDATE_MATCH` 관계로 둔다.
+- 논문에서만 의미 있는 entity는 paper-local type으로 유지한다.
+- 기존 graph와 상충되는 내용은 node 충돌이 아니라 `Claim`/`Finding`이 기존 entity를 `SUPPORTS` 또는 `CHALLENGES`하는 evidence-backed relation으로 표현하는 편이 맞다.
+
+### 권장 graph 구조
+
+논문 ingest 결과는 다음처럼 기존 graph 위에 overlay로 얹는다.
+
+```text
+Project graph
+  └─ Paper overlay graph
+       ├─ paper-specific entities
+       ├─ claims/findings
+       ├─ methods/datasets/metrics
+       └─ links to existing graph entities as candidate matches
+```
+
+권장 entity type:
+
+- `Paper`
+- `PaperSection`
+- `PaperConcept`
+- `Method`
+- `Dataset`
+- `Metric`
+- `Claim`
+- `Finding`
+- `Limitation`
+- `Citation`
+
+권장 relation:
+
+- `Paper -HAS_SECTION-> PaperSection`
+- `PaperSection -MENTIONS-> PaperConcept`
+- `Claim -SUPPORTED_BY-> chunk`
+- `Claim -USES_METHOD-> Method`
+- `Finding -MEASURED_BY-> Metric`
+- `PaperConcept -CANDIDATE_MATCH-> ExistingGraphEntity`
+- `Claim -SUPPORTS-> ExistingGraphEntity`
+- `Claim -CHALLENGES-> ExistingGraphEntity`
+
+### 기존 graph와의 merge 원칙
+
+논문 entity는 세 종류로 나눈다.
+
+1. **기존 graph와 동일/유사한 entity**
+   - 예: `LLM`, `Agent-based Simulation`, `Energy Transition`.
+   - 자동 merge 금지.
+   - paper provenance를 유지하고 candidate match로만 연결한 뒤 review 단계에서 merge/link/import를 결정.
+
+2. **논문 안에서만 의미 있는 entity**
+   - 예: 특정 method, dataset, benchmark, metric, model variant, experiment setting.
+   - 기존 career graph에 억지로 넣지 않고 paper overlay graph에 유지.
+
+3. **기존 graph와 상충하거나 다른 관점을 주는 claim**
+   - 예: 기존 graph는 어떤 기술을 강점으로 보지만 논문은 특정 조건의 취약점을 제시.
+   - entity 충돌로 처리하지 말고 evidence-backed `Claim`이 기존 entity를 `SUPPORTS`/`CHALLENGES`하는 구조로 표현.
+
+### 논문 chunking 방향
+
+논문은 고정 길이 청크만으로 처리하면 위험하다. 이전 section 정의, 약어, 실험 설정을 모르는 상태에서 downstream chunk를 추출하면 hallucination, 중복 entity, 잘못된 type이 늘어난다.
+
+권장 방식은 **section-aware hierarchical chunking**이다.
+
+1. 논문 구조를 먼저 파싱한다.
+   - Title
+   - Abstract
+   - Introduction
+   - Related Work
+   - Method
+   - Experiments
+   - Results
+   - Discussion
+   - Conclusion
+   - References
+2. paper brief를 만든다.
+   - title, abstract, core research question, main contribution, terminology/glossary.
+3. section summary를 만든다.
+   - 긴 section은 내부 청크로 나누되, 각 청크 extraction 때 section summary를 같이 제공.
+4. chunk extraction prompt에는 local context를 넣는다.
+   - current chunk
+   - previous chunk short summary
+   - section summary
+   - paper-level brief
+   - glossary/defined terms
+5. entity extraction은 2단계로 한다.
+   - chunk-level 후보 추출
+   - paper-level canonicalization: 중복 병합, 약어 확장, type 정정, paper-local entity와 existing graph match 후보 분리.
+
+### 긴 논문 처리 pipeline 후보
+
+```text
+1. Parse paper structure
+2. Build paper brief
+3. Build section summaries
+4. Chunk-level entity/claim extraction with local context
+5. Paper-level entity resolution/canonicalization
+6. Existing graph candidate match generation
+7. Claude/user review of merge/link/import candidates
+8. Apply only selected graph changes
+```
+
+### 다음 작업 후보
+
+- `paper ontology / chunking design spec` 작성.
+- 이후 구현 시 기존 `file_type="paper"`를 일반 chunk extraction과 분리해 paper-specific pipeline으로 처리.
+- paper overlay graph 저장 위치, existing graph match 후보 payload, review/apply workflow를 함께 설계해야 함.
+
+## 2026-06-06 MCP / Inbox / Claude 검수 / Simulation UI 방향 정리
+
+**중요:** 사용자가 현재 Claude Desktop으로 별도 작업을 진행 중이므로, 이 섹션은 다음 작업용 설계 메모다. 사용자가 명시하기 전까지 관련 코드 수정 금지.
+
+### Claude Desktop vs local LLM 역할 분리
+
+- **local LLM / ProjectOS backend 역할:** 문서 전체 읽기, 파일 타입 분류, chunk 추출, 초안 graph extraction, simulation 실행처럼 대량 context 처리가 필요한 작업.
+- **Claude Desktop 역할:** local LLM 산출물의 고품질 검수, patch 승인/작성, workflow orchestration. Claude를 local LLM 대체재로 쓰는 것이 아니라 품질 검수자로 사용.
+- 따라서 Claude Desktop에 원문 전체, simulation 전체 JSON, graph 전체를 기본 반환하는 흐름은 지양. 필요한 후보/trace/evidence만 단계적으로 전달.
+
+### Sync inbox 운영 방향
+
+- 원격 MCP/backend 구조에서는 로컬 파일 경로 업로드가 불가능하므로 Syncthing 기반 서버 폴더 sync를 사용.
+- ProjectOS repo 내부 sync root는 `project-inbox/`.
+- 운영체제/기기별 하위 폴더를 사용:
+  - `project-inbox/Macbook/`
+  - `project-inbox/Windows/`
+- 사용자는 Claude Desktop에 "Macbook에 올렸다" 또는 "Windows에 올렸다"고 말할 예정. Claude는 해당 하위 폴더를 `relative_path`로 조회.
+- `.gitignore`에는 `project-inbox/`가 포함되어야 하며, sync 파일은 git에 올라가면 안 됨.
+- backend 설정 의도:
+  - `INBOX_DIR=/raid/home/a202121010/workspace/projects/ProjectOS/project-inbox`
+  - `INBOX_PREVIEW_CHARS=1500`
+
+### Inbox 파일 타입 분류
+
+- 파일명만으로 `cv/paper/report/memo/email/note`를 정하면 정확도가 낮으므로 금지.
+- `projectos_list_inbox` 또는 `projectos_ingest_inbox_file(file_type="auto")`가 서버에서 짧은 preview를 추출하고 local LLM이 영어 프롬프트로 파일 타입을 판단하는 구조가 바람직.
+- Claude Desktop은 파일 내용을 직접 읽지 않고, `suggested_file_type`, `confidence`, `classification_reason`만 보고 필요 시 사용자에게 확인.
+- 파일 수가 많을 때는 `classify_files=false`로 폴더 구조를 먼저 보고, 사용자가 지정한 폴더만 `classify_files=true`로 재조회하는 UX가 좋음.
+
+### 그래프 품질 검수 방식 비교 실험 필요
+
+사용자 판단: 그래프 품질 검수는 바로 targeted 방식으로 전환하지 말고 두 방식을 비교해야 함.
+
+- **A. Claude full/review-heavy baseline**
+  - Claude가 graph/index/trace를 비교적 넓게 보고 직접 검수.
+  - 품질 기준선으로 사용.
+- **B. Backend deterministic pre-filter + Claude targeted review**
+  - ProjectOS backend가 duplicate/noisy/isolated/missing-evidence 후보를 deterministic하게 추림.
+  - Claude는 후보, source evidence, trace 중심으로 최종 판단.
+
+평가 기준 후보:
+- duplicate node 발견률
+- wrong entity type 발견률
+- missing relation 발견률
+- unsupported claim 발견률
+- noisy/generic entity 제거율
+- source evidence 정확도
+- patch 후 graph health 개선 정도
+- Claude Desktop token 사용량
+- 소요 시간
+- 사용자 재확인 필요 항목 수
+
+전환 기준 예시:
+- 품질 손실이 허용 범위(예: 5~10% 이내)이고 Claude token 사용량이 충분히 감소하면 targeted review 방식 채택.
+- 특히 개인 knowledge graph에서는 source evidence 정확도와 중요한 relation 누락 여부를 우선 평가.
+
+### Simulation 결과 반환/표시 방향
+
+- Simulation 전체 결과를 Claude Desktop context로 반환하는 방식은 부적절.
+- Persona agent 답변, environment/rule 구성, debate timeline, final report는 사용자가 ProjectOS UI에서 구조화된 템플릿으로 확인하는 것이 맞음.
+- Claude Desktop은 simulation 전체 context를 읽지 않고, 사용자가 선택한 graph delta 또는 low-confidence 항목만 검수하는 방향.
+
+권장 UI 구조:
+- `Query / Goal`
+- `Workflow Blocks`
+  - `Load Context`
+  - `Build Personas`
+  - `Build Environment`
+  - `Persona Analysis`
+  - `Debate`
+  - `Graph Delta Draft`
+  - `Final Report`
+  - `Apply Graph Changes`
+  - `Update Vault`
+  - `Complete`
+- `Persona Agents`
+  - role, stance, assumptions, focus areas, key points
+- `Environment / Rules`
+  - constraints, evaluation criteria, risks
+- `Debate Timeline`
+  - turn-by-turn discussion, agreements, disagreements, unresolved questions
+- `Final Report`
+  - executive summary, evidence-backed analysis, recommendations, uncertainties
+- `Graph Delta`
+  - nodes/edges added/updated/deleted, confidence, evidence, applied/skipped status
+
+### Simulation 실시간 시각화
+
+- 기존 task polling/SSE 구조를 이용해 workflow block highlight는 가능.
+- 더 나은 장기 구조는 simulation event log 기반:
+  - `step_started`
+  - `step_result`
+  - `step_completed`
+  - `step_failed`
+- UI는 실행 중 현재 block을 highlight하고, 완료된 block을 클릭하면 해당 단계 결과를 보여준다.
+- 실패해도 어느 단계까지 성공했는지 남아야 함.
+- block 클릭 detail 예:
+  - `Build Personas` → persona list, stance, assumptions
+  - `Build Environment` → constraints/rules/risks
+  - `Debate` → turn list, agreement/disagreement
+  - `Graph Delta Draft` → 변경 후보와 evidence
+  - `Final Report` → report section 렌더링
+
+### Graph visualization + simulation delta
+
+- Simulation UI는 Obsidian graph/ProjectOS graph도 함께 보여야 함.
+- simulation으로 graph가 수정되었거나 수정 후보가 있으면 해당 부분만 highlight.
+- 보기 모드 후보:
+  - full graph
+  - simulation delta only
+  - before/after diff
+- 변경 node/edge 클릭 시 보여줄 정보:
+  - 어떤 simulation step/persona/debate/report에서 나온 변경인지
+  - source chunk/evidence
+  - confidence/uncertainty
+  - 적용 여부
+
+### 다음 작업 후보
+
+1. 그래프 검수 비교 실험 spec 작성 — 완료
+   - full Claude review vs deterministic pre-filter + targeted Claude review.
+2. Claude Desktop MCP instruction 개정 — 완료
+   - full graph JSON 대신 `projectos_get_graph_summary` → `projectos_get_node_context`/`projectos_get_subgraph` 순서로 요청.
+   - simulation 전체 JSON을 읽지 말고 summary/delta/selected evidence만 요청하는 원칙도 문서화.
+3. simulation result schema 재정의 — 완료
+   - step workflow, event log, report sections, graph delta를 UI 렌더링 가능한 형태로 저장.
+4. simulation UI spec 작성 — 완료
+   - workflow block, clickable step detail, graph delta highlight.
+5. simulation token 절약 도구 설계 — 완료
+   - `projectos_get_simulation_graph_delta`
+   - `projectos_get_simulation_report_section`
+6. simulation schema 구현 또는 compact simulation tool 구현 — 다음 후보
+
+## 2026-06-06 Obsidian AI memory repos 비교 메모
+
+사용자 요청으로 다음 3개 repo를 확인하고 ProjectOS에 차용할 만한 기능을 정리함:
+- `eugeniughelbur/obsidian-second-brain`
+- `breferrari/obsidian-mind`
+- `kepano/obsidian-skills`
+
+### obsidian-second-brain 차용 포인트
+
+핵심 패턴:
+- command 기반 운영: ingest, save, reconcile, synthesize, daily, agenda, health, visualize 등 기능을 명확한 명령으로 쪼갬.
+- `CRITICAL_FACTS.md` 같은 초압축 identity/context 파일로 새 세션 시작 비용을 줄임.
+- append-only가 아니라 기존 페이지 rewrite/reconcile, contradiction 해결, synthesis를 강조.
+- nightly/weekly/health scheduled agent 개념.
+- vault 구조가 AI-first: `_CLAUDE.md`, `index.md`, `log.md`, identity 파일, raw source, wiki/entities/projects/daily/tasks/decisions 등으로 분리.
+
+ProjectOS 적용 후보:
+- `hot.md`보다 더 작은 `critical facts` 계층 추가.
+  - 예: `vault/{project_id}/_critical_facts.md`
+  - Claude Desktop이 항상 읽어도 되는 100~200 token project identity/context.
+- raw source와 generated vault를 명확히 구분하는 문서/폴더 규칙 강화.
+  - ProjectOS에서는 `project-inbox`와 `projects/{id}/files`가 raw 역할.
+  - generated vault note에는 "source of truth는 ProjectOS graph/files"임을 명확히 해야 함.
+- graph health를 vault-health 수준으로 확장.
+  - stale claim
+  - contradiction
+  - orphan
+  - weak evidence
+  - missing source
+- scheduled maintenance는 digest/watcher/google sync와 연결 가능.
+  - 단, 자동 Claude 대량 호출은 피하고 backend/local LLM이 후보를 만들며 Claude는 필요 시 검수.
+
+### obsidian-mind 차용 포인트
+
+핵심 패턴:
+- AI coding agent에 persistent memory를 주는 vault template.
+- `North Star`, active projects, tasks, recent memories를 session start에 로드.
+- daily/weekly/review workflow:
+  - standup
+  - dump
+  - wrap-up
+  - weekly
+  - vault audit
+  - review brief
+- subagent 분리:
+  - context-loader
+  - cross-linker
+  - review-fact-checker
+  - vault-librarian
+  - review-prep
+- semantic search optional + fallback 구조.
+
+ProjectOS 적용 후보:
+- Claude Desktop session start workflow 추가.
+  - 전체 graph를 바로 읽지 않음.
+  - 권장 순서:
+    1. `projectos_get_hot_context`
+    2. `projectos_get_critical_facts`
+    3. 필요 시 `projectos_get_graph_summary`
+- `projectos_get_project_brief` 도구 후보.
+  - active project state
+  - recent changes
+  - graph health warnings
+  - pending patches
+  - new synced inbox files
+- `review-fact-checker` 패턴을 #4 출처 인용 강제화에 반영.
+  - RAG 답변, simulation report, graph patch 후보가 source chunk/file로 검증됐는지 확인.
+- `vault-librarian` 패턴을 graph/vault consistency 관리에 반영.
+  - orphan nodes
+  - broken backlinks
+  - vault/graph mismatch
+  - stale generated notes
+- hybrid retrieval과 동일하게 검색/임베딩 기능은 항상 fallback 불변식을 유지해야 함.
+
+### obsidian-skills 차용 포인트
+
+핵심 패턴:
+- Obsidian 전용 agent skill 모음.
+- Markdown, Bases, JSON Canvas, Obsidian CLI, clean web extraction skill을 분리.
+- Obsidian-native syntax를 agent가 안정적으로 다루게 함:
+  - wikilinks
+  - embeds
+  - callouts
+  - properties/frontmatter
+  - JSON Canvas nodes/edges/groups
+
+ProjectOS 적용 후보:
+- Obsidian writer에 "Obsidian format contract"를 명확히 정의.
+  - frontmatter/properties schema
+  - wikilink 규칙
+  - callout 사용 규칙
+  - canvas node/edge schema
+  - Bases export 가능성
+- `_index.canvas` 품질을 별도 테스트 대상으로 분리.
+  - JSON Canvas schema validation
+  - layout stability
+  - node/edge/link consistency
+- clean markdown extraction 계층 검토.
+  - Gmail/Drive/web 자료를 raw HTML이 아니라 clean markdown으로 정리해 token 절약.
+- ProjectOS 전용 skill pack 후보.
+  - `projectos-review`
+  - `projectos-patch`
+  - `projectos-simulation-review`
+  - Claude Desktop instruction만 쓰지 말고 skill 문서로 재사용 가능하게 관리.
+
+### 세 repo 비교 후 ProjectOS 원칙
+
+- 세 repo는 대체로 "Claude/agent가 vault를 직접 읽고 쓰는" 철학이 강함.
+- ProjectOS는 그대로 따라가면 source of truth가 흐려질 수 있음.
+- ProjectOS 원칙은 유지:
+  - Obsidian = UI/표현/동기화 계층
+  - ProjectOS graph/files = source of truth
+  - Claude Desktop = 고품질 검수/patch 승인자
+  - local LLM/backend = 문서 전체 읽기와 대량 처리자
+
+### 우선순위에 반영할 개선점
+
+1. #4 출처 인용 강제화 spec에 `review-fact-checker` 패턴 포함.
+2. `critical facts` / `project brief` 도구 설계.
+3. graph/vault health를 vault-librarian 수준으로 확장.
+4. simulation UI/schema spec에 thinking workflow 결과를 UI 렌더링 대상으로 반영.
+5. Obsidian Canvas/Bases/Markdown format contract 작성.
+
+## 2026-06-06 ProjectOS 명령어 workflow 설계 메모
+
+세 Obsidian AI memory repo에서 공통으로 참고할 점은 "tool을 많이 노출"하는 것이 아니라, 사용자가 기억하기 쉬운 **의도 단위 command/workflow**로 묶는 방식이다.
+
+### 참고한 외부 command 패턴
+
+- `obsidian-second-brain`
+  - `obsidian-ingest`
+  - `obsidian-save`
+  - `obsidian-reconcile`
+  - `obsidian-synthesize`
+  - `obsidian-health`
+  - `obsidian-visualize`
+  - `obsidian-world`
+  - `obsidian-daily`
+  - `obsidian-review`
+  - `obsidian-architect`
+  - `research`, `research-deep`, `youtube`, `x-read`
+- `obsidian-mind`
+  - `om-standup`
+  - `om-dump`
+  - `om-wrap-up`
+  - `om-weekly`
+  - `om-vault-audit`
+  - `om-intake`
+  - `om-meeting`
+  - `om-prep-1on1`
+  - `om-review-brief`
+  - `om-self-review`
+  - `om-project-archive`
+- `obsidian-skills`
+  - slash command보다는 skill/instruction pack 패턴.
+  - `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `obsidian-cli`, `defuddle`처럼 특정 형식을 안정적으로 다루게 함.
+
+### ProjectOS command 후보
+
+초기에는 backend endpoint를 늘리기보다 Claude Desktop instruction에서 "workflow macro"로 정의해도 됨. 자주 쓰이고 안정화된 것만 추후 MCP/backend workflow로 내린다.
+
+1. `/projectos-start`
+   - 세션 시작 명령.
+   - 전체 graph를 바로 읽지 않고 최소 context만 로드.
+   - 내부 후보:
+     - `projectos_get_hot_context`
+     - `projectos_get_critical_facts`
+     - `projectos_get_project_brief`
+     - 필요 시 `projectos_get_graph_summary`
+
+2. `/projectos-ingest`
+   - 사용자가 "Macbook에 파일 올렸어" 또는 "Windows에 업로드했어"라고 말하면 실행.
+   - 내부 후보:
+     - `projectos_list_inbox(relative_path="Macbook"|"Windows", classify_files=true)`
+     - local LLM `suggested_file_type` 확인
+     - `projectos_ingest_inbox_files`
+     - parse task polling
+   - 초기/증분 모드를 인수로 받을 수 있음.
+
+3. `/projectos-build`
+   - 초기 그래프 빌드 workflow.
+   - 내부 후보:
+     - parse 완료 확인
+     - `projectos_build_ontology`
+     - ontology task polling
+     - `projectos_build_graph`
+     - graph task polling
+     - `projectos_get_graph_health`
+     - hot/critical facts refresh
+
+4. `/projectos-review-graph`
+   - 그래프 품질 검수 workflow.
+   - 비교 실험 전까지는 baseline/full review와 targeted review 모드를 모두 고려.
+   - 검수 항목:
+     - duplicate nodes
+     - wrong entity type
+     - missing relation
+     - unsupported claim
+     - noisy/generic entity
+     - weak/missing evidence
+   - 결과는 patch 후보로 이어져야 함.
+
+5. `/projectos-patch`
+   - Claude가 판단한 수정사항을 ProjectOS에 저장.
+   - 내부 후보:
+     - patch JSON 생성
+     - `projectos_apply_graph_patch`
+     - `projectos_get_graph_health`
+   - 규칙:
+     - source evidence 없는 patch 금지
+     - uncertain이면 사용자 확인
+     - patch 성공 전에는 저장됐다고 말하지 않음
+
+6. `/projectos-query`
+   - graph RAG 질의 workflow.
+   - #4 출처 인용 강제화 이후 모든 답변에 source citation 필수.
+   - 내부 후보:
+     - `projectos_query_career_graph`
+     - 필요 시 node/chunk/source context 조회
+
+7. `/projectos-simulate`
+   - simulation 실행 workflow.
+   - Claude Desktop에 전체 simulation JSON을 반환하지 않음.
+   - 내부 후보:
+     - `projectos_run_simulation`
+     - task polling
+     - UI에서 workflow/result 확인 안내
+     - 필요 시 `projectos_get_simulation_graph_delta` 또는 selected evidence만 Claude가 검수
+
+8. `/projectos-wrap-up`
+   - 작업 종료 workflow.
+   - 오늘 ingest/build/patch/simulation 결과 요약.
+   - pending issues와 다음 작업을 digest/handoff에 남김.
+   - `om-wrap-up` 패턴 차용.
+
+9. `/projectos-audit`
+   - graph/vault health audit.
+   - `obsidian-health`, `om-vault-audit`에 대응.
+   - 후보:
+     - orphan nodes
+     - duplicate candidates
+     - stale claims
+     - weak evidence
+     - graph-vault mismatch
+     - broken wikilinks
+
+10. `/projectos-brief`
+    - evidence-backed brief 생성.
+    - 후보:
+      - career brief
+      - project brief
+      - application/interview prep
+      - simulation report brief
+    - `om-review-brief`, `om-meeting`, `om-prep-1on1` 패턴 차용.
+
+### 우선 도입할 command 순서
+
+1. `/projectos-start`
+2. `/projectos-ingest`
+3. `/projectos-build`
+4. `/projectos-review-graph`
+5. `/projectos-simulate`
+
+그 다음:
+- `/projectos-patch`
+- `/projectos-audit`
+- `/projectos-wrap-up`
+- `/projectos-brief`
+
+### 설계 원칙
+
+- command는 사용자 언어와 MCP tool 사이의 workflow macro로 시작한다.
+- command가 안정화되면 `projectos_run_workflow` 같은 backend/MCP 단일 workflow로 내릴 수 있다.
+- Claude Desktop은 command를 실행하며 orchestration과 검수를 담당한다.
+- local LLM/backend는 문서 전체 읽기, 파일 타입 분류, 대량 graph extraction, simulation 실행을 담당한다.
+- command가 graph를 수정하는 경우 반드시 ProjectOS MCP patch/apply tool을 통해 persisted state로 저장해야 한다.
 
 ## 미커밋 이월 항목 (working tree, 브랜치 `hybrid-retrieval`)
 

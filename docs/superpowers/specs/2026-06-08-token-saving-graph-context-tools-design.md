@@ -4,6 +4,20 @@
 브랜치: `hybrid-retrieval`
 관련 핸드오프 후보: "token 절약 subgraph/node-context 도구 설계" (반복 지목된 다음 후보)
 
+## 구현 현황 정정 (2026-06-08)
+
+브레인스토밍 직후 확인 결과, **세 도구(`get_graph_summary`/`get_node_context`/`get_subgraph`)는
+이미 미커밋 WIP로 구현·테스트(6 passed)되어 있었다.** 실제 WIP 인터페이스는 본 spec 초안과
+다음과 같이 다르다(=실제 채택된 형태):
+- 노드 지정: `node_name` + 선택적 `node_type` 필터, **정확 id/name 일치**(substring 후보 없음).
+  모호 시 `match.ambiguous=true` + `match.ids` 전체 반환, 첫 매치를 결정적으로 선택.
+- `summarize_graph_context`도 포함(hot_context와 일부 중복되나 counts/types/relations/hubs로 차별).
+- 반환 형태: `{kind, read_only, query, match, counts, limits, node/nodes, edges}`.
+
+따라서 **이번 작업의 실질 범위는 `get_node_context`의 `include_evidence` opt-in 추가 하나**다.
+나머지 섹션의 from-scratch 인터페이스 제안(resolve_node_ref 후보 반환 등)은 기존 WIP을
+대체하지 않으며, evidence 델타만 기존 인터페이스 위에 더한다.
+
 ## 배경 / 목적
 
 ProjectOS는 Claude Desktop을 "고품질 검수자"로, local LLM/backend를 "대량 처리자"로 분리한다.
