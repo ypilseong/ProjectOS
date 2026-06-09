@@ -1,8 +1,12 @@
+import networkx as nx
+
 from app.services.capture_context import (
+    attach_capture_nodes,
     is_complete_context,
     load_captures,
     save_capture,
 )
+from app.utils.graph_restructure import is_meta_node
 
 
 def test_is_complete_context():
@@ -41,3 +45,30 @@ def test_save_capture_merges_multiple_sources():
     save_capture(pid, "b.md", {"capture_reason": "b", "current_focus": "b", "reflection_intent": "b"})
     loaded = load_captures(pid)
     assert set(loaded.keys()) == {"a.md", "b.md"}
+
+
+def test_is_meta_node():
+    assert is_meta_node({"meta": True}) is True
+    assert is_meta_node({"type": "Capture"}) is True
+    assert is_meta_node({"type": "Category"}) is True
+    assert is_meta_node({"type": "Skill"}) is False
+    assert is_meta_node({}) is False
+
+
+def test_attach_capture_nodes_links_source_entities():
+    g = nx.DiGraph()
+    g.add_node("n1", type="Skill", name="NetworkX", source_files=["clip.md"])
+    g.add_node("n2", type="Project", name="Other", source_files=["other.md"])
+    added = attach_capture_nodes(g, {
+        "clip.md": {
+            "capture_reason": "r", "current_focus": "graph work",
+            "reflection_intent": "i", "captured_at": "2026-06-09T00:00:00+00:00",
+        }
+    })
+    assert added == 1
+    cap_id = "capture::clip.md"
+    assert g.nodes[cap_id]["type"] == "Capture"
+    assert g.nodes[cap_id]["meta"] is True
+    assert g.has_edge(cap_id, "n1")
+    assert g.edges[cap_id, "n1"]["relation"] == "DERIVED_FROM"
+    assert not g.has_edge(cap_id, "n2")  # different source
