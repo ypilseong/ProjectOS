@@ -1,3 +1,4 @@
+import networkx as nx
 import pytest
 
 from app.agents.graph_builder_agent import GraphBuilderAgent
@@ -53,3 +54,22 @@ async def test_no_capture_context_leaves_prompt_clean():
     agent._llm = llm
     await agent.run([_chunk("clip.md")], _ontology())
     assert all("Capture intent for this source" not in p for p in llm.prompts)
+
+
+def test_run_graph_capture_integration_contract(tmp_path, monkeypatch):
+    # Simulate what _run_graph does: load captures, attach nodes to a built graph.
+    from app.services.capture_context import (
+        attach_capture_nodes,
+        load_captures,
+        save_capture,
+    )
+    pid = "rg-cap-1"
+    save_capture(pid, "clip.md", {
+        "capture_reason": "r", "current_focus": "focus", "reflection_intent": "i",
+    })
+    g = nx.DiGraph()
+    g.add_node("s1", type="Skill", name="NetworkX", source_files=["clip.md"])
+    captures = load_captures(pid)
+    attach_capture_nodes(g, captures)
+    assert g.nodes["capture::clip.md"]["type"] == "Capture"
+    assert g.has_edge("capture::clip.md", "s1")

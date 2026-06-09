@@ -299,6 +299,8 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         # --- End hash tracking ---
 
         graph_path = str(proj_dir / "graph.json")
+        from app.services.capture_context import attach_capture_nodes, load_captures
+        captures = load_captures(project_id)
         if config.GRAPH_BUILD_MODE == "claude_task":
             from app.agents.claude_task_graph_builder_agent import ClaudeTaskGraphBuilderAgent
             graph_agent = ClaudeTaskGraphBuilderAgent()
@@ -338,6 +340,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 incremental=incremental,
                 graph_path=graph_path,
                 progress_callback=on_chunk_progress,
+                capture_context=captures,
             )
 
         task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)
@@ -414,6 +417,11 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         graph, details_added = build_entity_details(graph)
         if details_added:
             logger.info(f"Entity details generated: {details_added}")
+
+        if captures:
+            capture_added = attach_capture_nodes(graph, captures)
+            if capture_added:
+                logger.info(f"Capture meta nodes attached: {capture_added}")
 
         graph_agent.save(graph, graph_path)
         hash_store.save()
