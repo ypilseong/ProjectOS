@@ -15,11 +15,15 @@ def isolate_filesystem(tmp_path, monkeypatch):
     projects_dir = tmp_path / "projects"
     vault_dir = tmp_path / "vault"
     logs_dir = tmp_path / "logs"
+    inbox_dir = tmp_path / "inbox"
     projects_dir.mkdir()
     vault_dir.mkdir()
     logs_dir.mkdir()
+    inbox_dir.mkdir()
 
     monkeypatch.setattr(config, "PROJECTS_DIR", str(projects_dir))
+    monkeypatch.setattr(config, "INBOX_DIR", str(inbox_dir))
+    monkeypatch.setattr(config, "INBOX_PREVIEW_CHARS", 1500)
     monkeypatch.setattr(config, "VAULT_DIR", str(vault_dir))
     monkeypatch.setattr(config, "LOG_DIR", str(logs_dir))
     monkeypatch.setattr(config, "USER_CONFIG_PATH", str(tmp_path / "user.json"))
@@ -27,6 +31,7 @@ def isolate_filesystem(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LLM_BACKEND", "local")
     monkeypatch.setattr(config, "GRAPH_EXTRACTION_BACKEND", "local")
     monkeypatch.setattr(config, "GRAPH_BUILD_MODE", "chunk")
+    monkeypatch.setattr(config, "GRAPH_BUILD_WORKERS", 2)
     monkeypatch.setattr(config, "CLAUDE_CODE_MODEL", "")
     monkeypatch.setattr(config, "CLAUDE_TASKS_DIR", str(tmp_path / "claude_tasks"))
     monkeypatch.setattr(config, "CLAUDE_TASK_BARE", False)
