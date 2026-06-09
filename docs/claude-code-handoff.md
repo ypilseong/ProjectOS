@@ -2,6 +2,36 @@
 
 Last updated: 2026-06-09
 
+## 2026-06-09 Web Simulation 시각화 UI 1차 구현
+
+**배경:** 사용자가 Obsidian plugin은 animation/실시간성 품질과 화면 제약이 크므로 simulation 진행 상황,
+결과, 전체 그래프, 수정 그래프 하이라이팅, 사용된 graph snapshot, project graph 시각화는 웹 UI에서
+처리하는 것이 맞다고 정정. 직전 plugin UI 변경은 되돌리고 웹 frontend 중심으로 전환.
+
+**이번 작업:**
+- **API:** `src/frontend/src/api/client.js`에 `runSimulation`, `getSimulation` 추가.
+- **adapter:** `src/frontend/src/lib/simulationViewModel.js` 추가. 현재 legacy simulation result와 향후
+  schema v2 result를 모두 `workflowSteps`, `reportSections`, `personas`, `debateRounds`,
+  `graphDeltaItems`, `evidenceRefs`로 변환. `buildSimulationOverlay`로 graph highlight/delta-only
+  overlay 구성.
+- **GraphView 확장:** `src/frontend/src/components/GraphView.vue`에 선택적
+  `highlightNodeIds`, `highlightLinkIds`, `dimUnhighlighted` props 추가. 기존 사용처와 호환 유지.
+- **SimulationPanel:** `src/frontend/src/components/SimulationPanel.vue` 추가. query/action,
+  apply graph/update vault toggle, SSE `ProgressPanel`, summary/workflow strip, graph modes
+  (`전체 그래프`, `사용된 그래프`, `수정 하이라이트`, `Delta only`), report/persona/debate/delta/evidence
+  tabs를 렌더링. 실행 전 graph snapshot을 보관해 현재 세션의 "사용된 그래프"를 표시.
+- **ProjectDetail 연결:** `src/frontend/src/views/ProjectDetail.vue`의 결과 탭에 `시뮬레이션` 탭 추가.
+  완료 후 최신 graph를 다시 로드해 project graph와 highlight를 갱신.
+
+**검증:** `cd src/frontend && npm run build` → 성공. `cd src/obsidian-plugin && npm run build` → 성공
+(plugin 변경 원복 확인용).
+
+**비범위:** backend `simulation.json` schema v2 writer, simulation before-graph snapshot 영구 저장,
+MCP compact simulation tools, graph delta 승인/거절 mutation API.
+
+**다음 후보:** backend가 simulation run별 input graph snapshot과 schema v2 `graph_delta`를 저장하도록 구현하면
+웹 UI의 "사용된 그래프"가 새로고침 후에도 복원되고, delta status/applied/skipped 필터도 정확해짐.
+
 ## 2026-06-09 Citation 강제화 강화 (재생성 루프)
 
 **배경:** 사용자 요청 — citation 강제화 강화. 기존 `citation_validator`는 답변 citation 품질을
