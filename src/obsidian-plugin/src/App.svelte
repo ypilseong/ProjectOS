@@ -3,6 +3,7 @@
   import type { App } from "obsidian";
   import type { AppStore } from "./store/appStore.svelte";
   import ProgressBar from "./ui/ProgressBar.svelte";
+  import WorkflowStrip from "./ui/WorkflowStrip.svelte";
   import ProjectSection from "./sections/ProjectSection.svelte";
   import RuntimeSection from "./sections/RuntimeSection.svelte";
   import SyncSection from "./sections/SyncSection.svelte";
@@ -35,6 +36,7 @@
     <h2>ProjectOS</h2>
     <div class="pos-status">{store.status}</div>
     <ProgressBar progress={store.task?.progress ?? 0} active={taskActive} />
+    <WorkflowStrip steps={store.workflow} />
   </header>
 
   <nav class="pos-nav" aria-label="Sections">

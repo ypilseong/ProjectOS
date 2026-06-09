@@ -49,10 +49,15 @@ export class ApiClient {
     return this.json<VaultPayload>(`/api/projects/${projectId}/vault/export`);
   }
 
-  async uploadFiles(projectId: string, files: FileList): Promise<{ task_id: string }> {
+  async uploadFiles(
+    projectId: string,
+    files: FileList,
+    fileTypes: Record<string, string> = {},
+  ): Promise<{ task_id: string }> {
     const form = new FormData();
     Array.from(files).forEach((file) => form.append("files", file));
     form.append("file_type", "note");
+    form.append("file_types", JSON.stringify(fileTypes));
     const response = await fetch(this.url(`/api/projects/${projectId}/files`), {
       method: "POST",
       body: form,
