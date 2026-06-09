@@ -1223,3 +1223,60 @@ def test_mcp_hot_context_unbuilt_is_error():
     )
     result = resp.json()["result"]
     assert result["isError"] is True
+
+
+def _call_clip(client, args, req_id=11):
+    return client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": req_id, "method": "tools/call",
+        "params": {"name": "projectos_ingest_clip", "arguments": args},
+    }).json()["result"]
+
+
+def test_mcp_ingest_clip_in_tools_list():
+    from app.mcp_tools import list_mcp_tools
+    names = {t["name"] for t in list_mcp_tools()}
+    assert "projectos_ingest_clip" in names
+
+
+def test_mcp_ingest_clip_needs_context(monkeypatch):
+    from app.services.task_manager import task_manager
+    project = project_store.create(name="Clip Needs Ctx", description="")
+    (Path(config.INBOX_DIR) / "clip1.md").write_text("# Clipped\nbody", encoding="utf-8")
+    client = TestClient(app)
+    before_tasks = len(task_manager.list_all()) if hasattr(task_manager, "list_all") else None
+    result = _call_clip(client, {
+        "project_id": project.project_id,
+        "relative_path": "clip1.md",
+    })
+    sc = result["structuredContent"]
+    assert sc["status"] == "needs_context"
+    assert {q["field"] for q in sc["required_questions"]} == {
+        "capture_reason", "current_focus", "reflection_intent",
+    }
+    # no file saved
+    assert not (Path(config.PROJECTS_DIR) / project.project_id / "files" / "clip1.md").exists()
+
+
+def test_mcp_ingest_clip_ingests_with_context():
+    project = project_store.create(name="Clip Ingest", description="")
+    (Path(config.INBOX_DIR) / "clip2.md").write_text("# Clipped\nbody", encoding="utf-8")
+    client = TestClient(app)
+    result = _call_clip(client, {
+        "project_id": project.project_id,
+        "relative_path": "clip2.md",
+        "file_type": "note",
+        "capture_context": {
+            "capture_reason": "useful reference",
+            "current_focus": "graph ingest feature",
+            "reflection_intent": "connect to ProjectOS",
+        },
+    })
+    sc = result["structuredContent"]
+    assert sc["status"] == "ingested"
+    assert sc["task_id"]
+    saved_name = sc["source_file"]
+    assert (Path(config.PROJECTS_DIR) / project.project_id / "files" / saved_name).exists()
+    from app.services.capture_context import load_captures
+    captures = load_captures(project.project_id)
+    assert saved_name in captures
+    assert captures[saved_name]["current_focus"] == "graph ingest feature"

@@ -131,6 +131,35 @@ def list_mcp_tools() -> list[dict]:
             ["project_id", "relative_paths"],
         ),
         _tool(
+            "projectos_ingest_clip",
+            (
+                "Ingest an Obsidian Web Clipper markdown file from the inbox into a project, "
+                "capturing the user's intent first. Call without capture_context to receive the "
+                "required questions (status=needs_context); ask the user, then call again with "
+                "capture_context to start ingestion. The intent guides graph extraction and is "
+                "recorded as a Capture node."
+            ),
+            {
+                "project_id": {"type": "string"},
+                "relative_path": {"type": "string"},
+                "file_type": {
+                    "type": "string",
+                    "default": "auto",
+                    "enum": ["auto", "cv", "paper", "report", "memo", "email", "note"],
+                },
+                "capture_context": {
+                    "type": "object",
+                    "description": "{capture_reason, current_focus, reflection_intent}. Omit to get the question contract.",
+                    "properties": {
+                        "capture_reason": {"type": "string"},
+                        "current_focus": {"type": "string"},
+                        "reflection_intent": {"type": "string"},
+                    },
+                },
+            },
+            ["project_id", "relative_path"],
+        ),
+        _tool(
             "projectos_get_task",
             "Return the status/progress of a ProjectOS background task.",
             {"task_id": {"type": "string"}},
@@ -601,6 +630,59 @@ async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
                     "classification": file_payload["classification"],
                 })
             payload = {"project_id": project_id, "ingested": ingested}
+            return _text_result(json.dumps(payload, ensure_ascii=False), payload)
+
+        if name == "projectos_ingest_clip":
+            from app.api.projects import save_file_and_start_parse
+            from app.services.capture_context import (
+                is_complete_context,
+                save_capture,
+            )
+            from app.services.inbox import read_inbox_file_for_ingest
+
+            project_id = str(args["project_id"])
+            if not project_store.get(project_id):
+                raise ValueError("Project not found")
+            relative_path = str(args["relative_path"])
+            capture_context = args.get("capture_context")
+            if not is_complete_context(capture_context):
+                payload = {
+                    "status": "needs_context",
+                    "project_id": project_id,
+                    "relative_path": relative_path,
+                    "required_questions": [
+                        {"field": "capture_reason",
+                         "question": "Why did you capture this content?"},
+                        {"field": "current_focus",
+                         "question": "What are you currently working on that this relates to?"},
+                        {"field": "reflection_intent",
+                         "question": "How should this be reflected in your knowledge graph?"},
+                    ],
+                }
+                return _text_result(json.dumps(payload, ensure_ascii=False), payload)
+
+            file_payload = await read_inbox_file_for_ingest(
+                relative_path,
+                file_type=str(args.get("file_type") or "auto"),
+            )
+            result = await save_file_and_start_parse(
+                project_id,
+                file_payload["filename"],
+                file_payload["content"],
+                file_payload["file_type"],
+            )
+            saved_source_file = result["files"][0]
+            saved_context = save_capture(project_id, saved_source_file, capture_context)
+            payload = {
+                "status": "ingested",
+                "project_id": project_id,
+                "task_id": result["task_id"],
+                "source_file": saved_source_file,
+                "relative_path": file_payload["relative_path"],
+                "file_type": file_payload["file_type"],
+                "capture_context": saved_context,
+                "classification": file_payload["classification"],
+            }
             return _text_result(json.dumps(payload, ensure_ascii=False), payload)
 
         if name == "projectos_get_task":
