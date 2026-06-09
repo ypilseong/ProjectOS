@@ -31,6 +31,8 @@ def load_captures(project_id: str) -> dict[str, dict]:
 
 
 def save_capture(project_id: str, source_file: str, context: dict) -> dict:
+    if not is_complete_context(context):
+        raise ValueError("capture context is incomplete")
     captures = load_captures(project_id)
     entry = {
         "capture_reason": str(context.get("capture_reason") or "").strip(),
@@ -51,6 +53,8 @@ def attach_capture_nodes(graph: nx.DiGraph, captures: dict[str, dict]) -> int:
     for source_file, ctx in captures.items():
         node_id = f"capture::{source_file}"
         focus = str(ctx.get("current_focus") or "").strip()
+        if node_id not in graph:
+            added += 1
         graph.add_node(
             node_id,
             type="Capture",
@@ -62,7 +66,6 @@ def attach_capture_nodes(graph: nx.DiGraph, captures: dict[str, dict]) -> int:
             captured_at=str(ctx.get("captured_at") or ""),
             source_files=[source_file],
         )
-        added += 1
         for nid, data in list(graph.nodes(data=True)):
             if nid == node_id or data.get("meta"):
                 continue

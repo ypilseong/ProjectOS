@@ -1,4 +1,3 @@
-from app.config import config
 from app.services.capture_context import (
     is_complete_context,
     load_captures,
@@ -32,7 +31,8 @@ def test_save_and_load_round_trip():
     assert entry["capture_reason"] == "useful method"
     assert entry["current_focus"] == "thesis ch3"
     assert entry["reflection_intent"] == "link to graph methods"
-    assert entry["captured_at"]  # populated
+    from datetime import datetime
+    assert datetime.fromisoformat(entry["captured_at"])  # valid ISO-8601
 
 
 def test_save_capture_merges_multiple_sources():
