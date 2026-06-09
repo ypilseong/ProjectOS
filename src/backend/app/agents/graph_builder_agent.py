@@ -155,8 +155,10 @@ class GraphBuilderAgent:
         incremental: bool = False,
         graph_path: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        capture_context: dict[str, dict] | None = None,
     ) -> nx.DiGraph:
         graph = nx.DiGraph()
+        self._capture_context = capture_context or {}
         if incremental and graph_path and Path(graph_path).exists():
             data = json.loads(Path(graph_path).read_text())
             # normalize legacy 'links' key back to 'edges' for nx.node_link_graph compatibility
@@ -216,8 +218,19 @@ class GraphBuilderAgent:
         user_ctx = f"\n{self._user_context}\n" if self._user_context else ""
         doc_rules = self._document_type_rules(chunk.file_type)
         doc_rules_block = f"\n{doc_rules}\n" if doc_rules else ""
+        capture = getattr(self, "_capture_context", {}).get(chunk.source_file)
+        capture_block = ""
+        if capture:
+            capture_block = (
+                "\nCapture intent for this source:\n"
+                f"- Reason captured: {capture.get('capture_reason', '')}\n"
+                f"- User is currently working on: {capture.get('current_focus', '')}\n"
+                f"- Desired reflection: {capture.get('reflection_intent', '')}\n"
+                "Prioritize entities and relations relevant to this intent. "
+                "Do not invent entities unrelated to the source text.\n"
+            )
         prompt = f"""Extract entities and relations from the text below.
-{user_ctx}
+{capture_block}{user_ctx}
 Allowed entity types: {', '.join(entity_types)}
 Allowed relation types: {', '.join(edge_types)}
 
