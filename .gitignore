@@ -14,11 +14,14 @@ dist/
 src/backend/settings.json
 src/backend/projects/*/files/
 src/backend/projects/**/*.json
+src/backend/projects/**/*.jsonl
 src/backend/vault/**/*.md
 src/backend/vault/**/*.canvas
 src/backend/vault/**/*.json
 vault/
 logs/
+project-inbox/
+projectos-inbox/
 **/.stfolder
 **/.stignore
 
