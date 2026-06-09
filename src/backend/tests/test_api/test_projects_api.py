@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from pathlib import Path
+import json
 
 
 @pytest.fixture
@@ -57,6 +58,54 @@ def test_upload_files(client, tmp_path):
     )
     assert r.status_code == 200
     assert "task_id" in r.json()
+
+
+def test_upload_files_accepts_per_file_type_map(client):
+    create_r = client.post("/api/projects", json={"name": "Typed Upload Test"})
+    pid = create_r.json()["project_id"]
+
+    r = client.post(
+        f"/api/projects/{pid}/files",
+        files=[
+            ("files", ("cv.txt", b"CV content " * 20, "text/plain")),
+            ("files", ("paper.txt", b"Paper content " * 20, "text/plain")),
+        ],
+        data={
+            "file_type": "note",
+            "file_types": json.dumps({"cv.txt": "cv", "paper.txt": "paper"}),
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json()["file_types"] == {"cv.txt": "cv", "paper.txt": "paper"}
+
+
+@pytest.mark.asyncio
+async def test_run_parse_preserves_per_file_types(client):
+    from app.api.projects import _run_parse
+    from app.config import config as _cfg
+    from app.services.task_manager import task_manager
+
+    create_r = client.post("/api/projects", json={"name": "Typed Parse Test"})
+    pid = create_r.json()["project_id"]
+    files_dir = Path(_cfg.PROJECTS_DIR) / pid / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    cv_path = files_dir / "cv.txt"
+    memo_path = files_dir / "memo.txt"
+    cv_path.write_text("CV text " * 30, encoding="utf-8")
+    memo_path.write_text("Memo text " * 30, encoding="utf-8")
+
+    task = task_manager.create(pid, "parse")
+    await _run_parse(
+        task.task_id,
+        pid,
+        [str(cv_path), str(memo_path)],
+        {"cv.txt": "cv", "memo.txt": "memo"},
+    )
+
+    chunks = json.loads((Path(_cfg.PROJECTS_DIR) / pid / "chunks.json").read_text(encoding="utf-8"))
+    file_types = {chunk["source_file"]: chunk["file_type"] for chunk in chunks}
+    assert file_types == {"cv.txt": "cv", "memo.txt": "memo"}
 
 
 def test_upload_raw_file(client):
@@ -348,3 +397,39 @@ def test_run_simulation_returns_task_id_when_graph_and_chunks_exist(client):
 
     assert r2.status_code == 200
     assert "task_id" in r2.json()
+
+
+def test_reconcile_endpoint_dry_run_returns_patch(client, tmp_path, monkeypatch):
+    import json
+    import networkx as nx
+    from app.config import config
+
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr(config, "VAULT_DIR", str(tmp_path / "vault"))
+    pid = "pApi"
+    g = nx.DiGraph()
+    g.add_node("Skill:Python", type="Skill", name="Python", description="언어")
+    pdir = tmp_path / "projects" / pid
+    pdir.mkdir(parents=True)
+    data = nx.node_link_data(g)
+    if "edges" in data and "links" not in data:
+        data["links"] = data.pop("edges")
+    (pdir / "graph.json").write_text(json.dumps(data), encoding="utf-8")
+    page = tmp_path / "vault" / pid / "Skills" / "Python.md"
+    page.parent.mkdir(parents=True)
+    page.write_text('---\ntype: Skill\nname: "Python"\n---\n\n## Overview\n새 설명\n',
+                    encoding="utf-8")
+
+    resp = client.post(f"/api/projects/{pid}/reconcile")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["applied"] is False
+    assert body["summary"]["nodes_update"] >= 1
+
+
+def test_reconcile_endpoint_missing_graph_returns_400(client, tmp_path, monkeypatch):
+    from app.config import config
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr(config, "VAULT_DIR", str(tmp_path / "vault"))
+    resp = client.post("/api/projects/nope/reconcile")
+    assert resp.status_code == 400

@@ -31,6 +31,39 @@ def _safe_upload_filename(filename: str) -> str:
     return safe
 
 
+def _parse_file_type_map(
+    filenames: list[str],
+    file_type: str = "note",
+    file_types: str | None = None,
+) -> dict[str, str]:
+    fallback = (file_type or "note").strip() or "note"
+    if not file_types:
+        return {filename: fallback for filename in filenames}
+
+    raw = file_types.strip()
+    if not raw:
+        return {filename: fallback for filename in filenames}
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = [item.strip() for item in raw.split(",") if item.strip()]
+
+    if isinstance(parsed, dict):
+        return {
+            filename: str(parsed.get(filename) or fallback).strip() or fallback
+            for filename in filenames
+        }
+    if isinstance(parsed, list):
+        result: dict[str, str] = {}
+        for idx, filename in enumerate(filenames):
+            value = parsed[idx] if idx < len(parsed) else fallback
+            result[filename] = str(value or fallback).strip() or fallback
+        return result
+
+    raise HTTPException(status_code=400, detail="file_types must be a JSON object, JSON array, or comma-separated list")
+
+
 async def save_file_and_start_parse(
     project_id: str,
     filename: str,
@@ -97,6 +130,7 @@ async def upload_files(
     project_id: str,
     files: list[UploadFile] = File(...),
     file_type: str = Form("note"),
+    file_types: str | None = Form(None),
 ):
     project = project_store.get(project_id)
     if not project:
@@ -106,19 +140,22 @@ async def upload_files(
     files_dir.mkdir(parents=True, exist_ok=True)
 
     saved_paths = []
+    safe_filenames = [_safe_upload_filename(f.filename) for f in files]
+    type_by_file = _parse_file_type_map(safe_filenames, file_type, file_types)
     for f in files:
-        dest = files_dir / f.filename
+        safe_filename = _safe_upload_filename(f.filename)
+        dest = files_dir / safe_filename
         async with aiofiles.open(dest, "wb") as out:
             await out.write(await f.read())
         saved_paths.append(str(dest))
-        if f.filename not in project.files:
-            project.files.append(f.filename)
+        if safe_filename not in project.files:
+            project.files.append(safe_filename)
 
     project.status = ProjectStatus.PARSING
     project_store.save(project)
     task = task_manager.create(project_id, "parse")
-    asyncio.create_task(_run_parse(task.task_id, project_id, saved_paths, file_type))
-    return {"task_id": task.task_id, "files": [f.filename for f in files]}
+    asyncio.create_task(_run_parse(task.task_id, project_id, saved_paths, type_by_file))
+    return {"task_id": task.task_id, "files": safe_filenames, "file_types": type_by_file}
 
 
 @router.post("/{project_id}/files/raw")
@@ -149,8 +186,9 @@ async def add_files(
     project_id: str,
     files: list[UploadFile] = File(...),
     file_type: str = Form("note"),
+    file_types: str | None = Form(None),
 ):
-    return await upload_files(project_id, files=files, file_type=file_type)
+    return await upload_files(project_id, files=files, file_type=file_type, file_types=file_types)
 
 
 @router.get("/{project_id}/vault")
@@ -273,6 +311,44 @@ async def run_profiles(project_id: str):
     return {"task_id": task.task_id}
 
 
+@router.post("/{project_id}/simulation")
+async def run_simulation(project_id: str, body: dict):
+    """Run the persona/environment simulation only when explicitly requested."""
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    graph_path = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    chunks_path = Path(config.PROJECTS_DIR) / project_id / "chunks.json"
+    if not graph_path.exists():
+        raise HTTPException(400, "Graph not built yet — run graph build first")
+    if not chunks_path.exists():
+        raise HTTPException(400, "No parsed documents found — upload files first")
+
+    task = task_manager.create(project_id, "simulation")
+    asyncio.create_task(
+        _run_simulation(
+            task.task_id,
+            project_id,
+            query=str(body.get("query") or ""),
+            cv_text=str(body.get("cv_text") or ""),
+            apply_graph=bool(body.get("apply_graph", True)),
+            update_vault=bool(body.get("update_vault", True)),
+        )
+    )
+    return {"task_id": task.task_id}
+
+
+@router.get("/{project_id}/simulation")
+async def get_simulation(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    p = Path(config.PROJECTS_DIR) / project_id / "simulation.json"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Simulation not run yet")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
 def _build_tree(path: Path) -> list:
     result = []
     try:
@@ -296,7 +372,18 @@ def _build_tree(path: Path) -> list:
     return result
 
 
-async def _run_parse(task_id: str, project_id: str, paths: list[str], file_type: str):
+def _file_type_for_path(path: str, file_type: str | dict[str, str]) -> str:
+    if isinstance(file_type, dict):
+        return str(file_type.get(Path(path).name) or "note").strip() or "note"
+    return str(file_type or "note").strip() or "note"
+
+
+async def _run_parse(
+    task_id: str,
+    project_id: str,
+    paths: list[str],
+    file_type: str | dict[str, str],
+):
     from app.agents.parser_agent import ParserAgent
     from app.utils.logger import reset_log_project, set_log_project
     log_token = set_log_project(project_id)
@@ -318,11 +405,12 @@ async def _run_parse(task_id: str, project_id: str, paths: list[str], file_type:
                 progress=5 + int(ratio * 85),
             )
 
-        chunks = agent.run(
-            paths,
-            file_type=file_type,
-            progress_callback=on_file_progress,
-        )
+        chunks = []
+        for idx, path in enumerate(paths, start=1):
+            chunks.extend(
+                agent.run([path], file_type=_file_type_for_path(path, file_type))
+            )
+            on_file_progress(idx, total_files, Path(path).name)
 
         out = Path(config.PROJECTS_DIR) / project_id / "chunks.json"
         existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else []
@@ -333,6 +421,13 @@ async def _run_parse(task_id: str, project_id: str, paths: list[str], file_type:
         out.write_text(
             json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+
+        try:
+            from app.services.retrieval_index import build_chunk_index
+            await build_chunk_index(project_id)
+        except Exception as e:
+            from app.utils.logger import get_logger
+            get_logger(__name__).warning(f"chunk index build skipped: {e}")
 
         project = project_store.get(project_id)
         if project:
@@ -488,3 +583,108 @@ async def _run_profiles(task_id: str, project_id: str):
         task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
     finally:
         reset_log_project(log_token)
+
+
+async def _run_simulation(
+    task_id: str,
+    project_id: str,
+    query: str,
+    cv_text: str,
+    apply_graph: bool,
+    update_vault: bool,
+):
+    import networkx as nx
+    from networkx.readwrite import json_graph
+
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    from app.agents.simulation_agent import ProjectSimulationAgent
+    from app.models.graph import TextChunk
+    from app.utils.logger import reset_log_project, set_log_project
+
+    log_token = set_log_project(project_id)
+    try:
+        task_manager.update(
+            task_id,
+            status=TaskStatus.RUNNING,
+            message="시뮬레이션 컨텍스트 로딩 중...",
+            progress=10,
+        )
+        proj_dir = Path(config.PROJECTS_DIR) / project_id
+        graph_data = json.loads((proj_dir / "graph.json").read_text(encoding="utf-8"))
+        if "links" in graph_data and "edges" not in graph_data:
+            graph_data["edges"] = graph_data.pop("links")
+        graph = nx.node_link_graph(graph_data)
+        chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
+        chunks = [TextChunk(**c) for c in chunks_data]
+
+        task_manager.update(
+            task_id,
+            message="페르소나 및 환경 agent 구성 중...",
+            progress=30,
+        )
+        agent = ProjectSimulationAgent()
+        task_manager.update(
+            task_id,
+            message="local LLM으로 페르소나 agent 시뮬레이션 실행 중...",
+            progress=45,
+        )
+        result = await agent.run(
+            graph,
+            chunks,
+            query=query,
+            cv_text=cv_text,
+            apply_graph=apply_graph,
+        )
+
+        task_manager.update(task_id, message="시뮬레이션 결과 저장 중...", progress=75)
+        (proj_dir / "simulation.json").write_text(
+            json.dumps(result, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        if apply_graph:
+            graph_path = proj_dir / "graph.json"
+            graph_path.write_text(
+                json.dumps(json_graph.node_link_data(graph), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            project = project_store.get(project_id)
+            if project:
+                stats = GraphBuilderAgent().get_stats(graph)
+                project.stats = dataclasses.asdict(stats)
+                project_store.save(project)
+
+        if update_vault:
+            task_manager.update(task_id, message="Obsidian vault 업데이트 중...", progress=88)
+            ObsidianWriterAgent().run(
+                graph,
+                vault_path=str(Path(config.VAULT_DIR) / project_id),
+                delta=True,
+                project_id=project_id,
+            )
+
+        changes = result.get("applied_graph_changes", {})
+        task_manager.update(
+            task_id,
+            status=TaskStatus.COMPLETED,
+            progress=100,
+            message=(
+                "시뮬레이션 완료: "
+                f"노드 +{changes.get('nodes_added', 0)}, "
+                f"엣지 +{changes.get('edges_added', 0)}"
+            ),
+        )
+    except Exception as e:
+        task_manager.update(task_id, status=TaskStatus.FAILED, error=str(e))
+    finally:
+        reset_log_project(log_token)
+
+
+@router.post("/{project_id}/reconcile")
+async def reconcile_vault_endpoint(project_id: str, apply: bool = False):
+    from app.services.vault_reconcile import reconcile_vault
+    try:
+        return reconcile_vault(project_id, apply=apply)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
