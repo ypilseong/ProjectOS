@@ -6,6 +6,7 @@ from app.services.capture_context import (
     load_captures,
     save_capture,
 )
+from app.utils import graph_health
 from app.utils.graph_restructure import is_meta_node
 
 
@@ -72,3 +73,29 @@ def test_attach_capture_nodes_links_source_entities():
     assert g.has_edge(cap_id, "n1")
     assert g.edges[cap_id, "n1"]["relation"] == "DERIVED_FROM"
     assert not g.has_edge(cap_id, "n2")  # different source
+
+
+def _graph_with_capture():
+    g = nx.DiGraph()
+    g.add_node("s1", type="Skill", name="NetworkX", source_files=["clip.md"])
+    g.add_node("capture::clip.md", type="Capture", meta=True,
+               name="focus", source_files=["clip.md"])
+    g.add_edge("capture::clip.md", "s1", relation="DERIVED_FROM", meta=True)
+    return g
+
+
+def test_health_isolated_excludes_capture():
+    g = _graph_with_capture()
+    g.add_node("lonely", type="Skill", name="Lonely")
+    isolated = graph_health.check_isolated_nodes(g)
+    ids = {item["node_id"] for item in isolated}
+    assert "lonely" in ids
+    assert "capture::clip.md" not in ids
+
+
+def test_obsidian_writer_skips_capture_page():
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    agent = ObsidianWriterAgent()
+    index_md = agent._render_index(_graph_with_capture())
+    assert "NetworkX" in index_md
+    assert "focus" not in index_md  # Capture node not listed

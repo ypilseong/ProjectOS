@@ -10,6 +10,7 @@ import networkx as nx
 from app.config import config
 from app.models.graph import CareerProfile
 from app.models.vault import VaultFile, VaultNote, VaultPayload
+from app.utils.graph_restructure import is_meta_node
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -68,7 +69,7 @@ class ObsidianWriterAgent:
         nodes = [
             (node_id, data)
             for node_id, data in graph.nodes(data=True)
-            if data.get("type") != "Category"
+            if not is_meta_node(data)
         ]
         for node_id, data in nodes:
             ntype = data.get("type", "Unknown")
@@ -309,6 +310,8 @@ class ObsidianWriterAgent:
         edges_canvas = []
 
         for i, node_id in enumerate(graph.nodes):
+            if is_meta_node(graph.nodes[node_id]):
+                continue
             node_type = graph.nodes[node_id].get("type", "Unknown")
             x = float((i % 10) * 250)
             y = float((i // 10) * 200)
@@ -344,7 +347,7 @@ class ObsidianWriterAgent:
         by_type: dict[str, list[tuple[str, str]]] = {}
         for node_id, data in graph.nodes(data=True):
             ntype = data.get("type", "")
-            if ntype == "Category":
+            if is_meta_node(data):
                 continue
             name = data.get("name", "")
             if not name:

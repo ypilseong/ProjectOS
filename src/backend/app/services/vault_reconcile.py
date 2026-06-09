@@ -7,7 +7,11 @@ import networkx as nx
 from app.agents.obsidian_writer_agent import TYPE_TO_FOLDER
 from app.config import config
 from app.utils.graph_patch import apply_project_graph_patch
-from app.utils.graph_restructure import build_entity_details, demote_project_context_nodes
+from app.utils.graph_restructure import (
+    build_entity_details,
+    demote_project_context_nodes,
+    is_meta_node,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -97,7 +101,7 @@ def _read_vault_pages(vault: Path) -> dict[tuple[str, str], dict]:
 def _rendered_pages(rendered: nx.DiGraph) -> dict[tuple[str, str], dict]:
     pages: dict[tuple[str, str], dict] = {}
     for node_id, data in rendered.nodes(data=True):
-        if data.get("type") == "Category":
+        if is_meta_node(data):
             continue
         name = data.get("name")
         if not name:
@@ -116,8 +120,7 @@ def _rendered_edges(rendered: nx.DiGraph) -> set[tuple[str, str, str]]:
         vn = rendered.nodes[v].get("name")
         if not un or not vn:
             continue
-        if (rendered.nodes[u].get("type") == "Category"
-                and rendered.nodes[v].get("type") == "Category"):
+        if is_meta_node(rendered.nodes[u]) or is_meta_node(rendered.nodes[v]):
             continue
         edges.add((un, vn, str(d.get("relation", "")).strip().upper()))
     return edges

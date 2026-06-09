@@ -267,7 +267,7 @@ def _node_candidate(
 def _find_duplicate_pairs(graph: nx.Graph, threshold: float) -> list[dict[str, Any]]:
     by_type: dict[str, list[tuple[str, str]]] = {}
     for node_id, data in graph.nodes(data=True):
-        if _is_category(data):
+        if _is_category(data) or data.get("meta"):
             continue
         ntype = data.get("type")
         name = data.get("name")
