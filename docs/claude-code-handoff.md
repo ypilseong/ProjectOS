@@ -1,6 +1,49 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-09
+Last updated: 2026-06-10
+
+## 2026-06-10 Context-aware 웹 클립 ingest (Obsidian Web Clipper → 그래프)
+
+**배경:** 사용자가 Obsidian Web Clipper로 웹 콘텐츠를 마크다운으로 inbox에 저장하면,
+ProjectOS가 이를 그래프로 분석한다. 단순 파일 업로드와 달리 클립은 *의도*를 담으므로,
+분석 전에 캡처 의도 세 가지(왜 캡처했는지 / 지금 무엇을 하는지 / 그래프에 어떻게 반영할지)를
+사용자에게 되묻고 그 답을 추출·기록에 활용한다. URL fetch/HTML 정제는 범위 밖
+(Web Clipper가 이미 정제된 .md를 만든다).
+
+**구현 (TDD, 7개 태스크):**
+- **capture-context 저장소:** `app/services/capture_context.py` — `is_complete_context`,
+  `load_captures`, `save_capture`(불완전 컨텍스트면 ValueError), `attach_capture_nodes`.
+  컨텍스트는 `projects/{id}/captures.json`에 `source_file → {capture_reason, current_focus,
+  reflection_intent, captured_at}`로 저장. 저장 키는 `save_file_and_start_parse`가 반환하는
+  sanitized 파일명(= `chunk.source_file`)이라 빌드 시 join 가능.
+- **needs_context 계약 (MCP):** `projectos_ingest_clip` 도구. `capture_context` 누락/불완전이면
+  부작용 없이 `status=needs_context` + 영어 질문 3개 반환(파일 저장·태스크 생성 없음). 완전하면
+  inbox 파일 저장 → parse 태스크 시작 → `save_capture` → `status=ingested` 반환.
+- **추출 프롬프트 주입:** `GraphBuilderAgent.run(... capture_context=None)`; 해당 source에
+  캡처 항목이 있으면 `_extract_from_chunk` 프롬프트에 "Capture intent for this source" 프리앰블을
+  prepend. 캡처 없으면 프롬프트는 byte-identical(완전 하위호환).
+- **Capture 메타 노드:** `_run_graph`가 `load_captures` 후 else-branch builder에 전달하고,
+  모든 후처리 뒤 save 직전 `attach_capture_nodes`로 `capture::{source_file}` 노드(type=Capture,
+  meta=True) + 해당 source 엔티티로의 `DERIVED_FROM` 메타 엣지를 추가. 두 빌더 분기 모두 적용.
+- **메타 노드 제외 배선:** 공유 술어 `is_meta_node(data)`(graph_restructure.py) =
+  `meta` truthy 또는 type ∈ {Category, Capture}. obsidian_writer(page/index/canvas),
+  graph_health(5개 검사 함수), vault_reconcile(rendered pages/edges), autoresearch
+  (`_find_duplicate_pairs`)에서 기존 Category 제외 지점을 이 술어로 통일. Capture 노드는
+  graph.json에는 남지만 career-graph 지표·vault 렌더·autoresearch에는 영향 없음.
+
+**검증:** `python3 -m pytest tests/ -q` → **461 passed, 0 failed**(이전 baseline 446 + 신규
+capture/health/writer/MCP/graph-builder 테스트). `import app.main` + `list_mcp_tools()`에
+`projectos_ingest_clip` 등록 확인.
+
+**문서:** 설계 `docs/superpowers/specs/2026-06-09-context-aware-clip-ingest-design.md`,
+계획 `docs/superpowers/plans/2026-06-09-context-aware-clip-ingest.md`.
+
+**비범위(YAGNI):** backend URL fetch/HTML 정제 없음, frontend UI·REST 엔드포인트 없음
+(MCP 도구+서비스만), 클립을 "현재 작업" 노드에 자동 연결하지 않음(의도는 Capture 노드와
+DERIVED_FROM 엣지에만 기록), 재-ingest 시 질문 생략/중복제거 로직 없음.
+
+**다음 후보:** 필요 시 frontend/REST 노출, 동일 클립 재캡처 시 직전 의도 제안, Capture 노드를
+현재 진행 프로젝트 노드에 연결하는 옵션.
 
 ## 2026-06-09 Web Simulation 시각화 UI 1차 구현
 
