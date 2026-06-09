@@ -1,6 +1,37 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-08
+Last updated: 2026-06-09
+
+## 2026-06-09 Citation 강제화 강화 (재생성 루프)
+
+**배경:** 사용자 요청 — citation 강제화 강화. 기존 `citation_validator`는 답변 citation 품질을
+read-only report로만 반환했고(설계상 "답변 자동 rewrite/retry"는 명시적 비범위), MCP 질의 경로는
+report를 첨부할 뿐 위반에 아무 조치를 안 했음. 이번 단계가 그 후속: 검증 실패 시 재생성으로 실제 강제.
+
+**결정(사용자 승인, AskUserQuestion):** enforcement=**재생성 루프**, 적용 경로=**MCP 비스트리밍만**.
+SSE 스트리밍 채팅(`QueryAgent.stream`)은 호환성 위해 그대로 유지.
+
+**이번 작업:**
+- **QueryAgent(커밋됨):** `answer_with_enforced_citations(question, graph, chunks, vault_path=None,
+  max_retries=1)` 추가. 컨텍스트/allowed label/base prompt를 한 번 산출 → `_generate`(비스트리밍
+  `self._llm.chat`, 테스트 seam) → `validate_citations` → 실패 시 `_build_citation_correction_prompt`
+  (이전 답변 + unknown label/미인용 문장 상위 5개 + 허용 라벨 나열)로 최대 N회 재생성.
+  반환 `{answer, citation_report, allowed_citation_labels, attempts}`. `max_attempts=max(1,
+  max_retries+1)` → `max_retries=0`이면 1회 생성+report만(기존과 유사). 단위 테스트 4종 추가.
+- **MCP 배선(⚠️ 미커밋, 기존 정책대로 mcp_tools.py/test_mcp_api.py는 사용자 WIP과 동거):**
+  `projectos_query_career_graph` 핸들러를 새 메서드 호출로 교체(스트림 수집 + 사후 validator 코드
+  제거). 인수 `max_citation_retries`(int 0–3, 기본 1) + tools/list 스키마 추가. structuredContent에
+  `attempts`/`project_id` 포함. 기존 report 테스트를 `_generate` mock으로 갱신, 재생성 테스트 신규 추가.
+- **검증:** `python3 -m pytest tests/ -q` → **446 passed**(441 + query_agent 4 + MCP 1).
+
+**spec/plan:** `docs/superpowers/specs/2026-06-09-citation-enforcement-design.md`,
+`docs/superpowers/plans/2026-06-09-citation-enforcement.md`.
+
+**비범위(YAGNI):** SSE 스트리밍 enforcement/후처리 버퍼링, 결정적 unknown-label strip, LLM fact-check,
+답변 차단(block/refuse), simulation/graph patch citation 강제화.
+
+**다음 후보:** mcp_tools.py/test_mcp_api.py의 누적 미커밋 WIP(Google/Inbox/simulation/UI +
+node_context evidence + 이번 citation 배선) 기능 단위 커밋 정리, `/ingest-url`, Obsidian format contract.
 
 ## 2026-06-08 토큰 절약 조회 도구 검증 + node_context evidence opt-in
 
@@ -437,6 +468,12 @@ Project graph
    - `projectos_get_simulation_graph_delta`
    - `projectos_get_simulation_report_section`
 6. simulation schema 구현 또는 compact simulation tool 구현 — 다음 후보
+7. Obsidian plugin 통합/프로젝트 graph viewer 설계
+   - 결론: MCP만으로는 전체/프로젝트 그래프를 상시 탐색하려면 매번 Claude Desktop query가 필요해 UX가 약하다.
+   - 역할 분리: MCP는 실행/검수/자동화, Obsidian plugin은 시각화/탐색/수동 확인 UI, backend는 source of truth.
+   - plugin 기능 후보: `Project graph / Global graph` toggle, project/type/relation filter, search, node click detail, cross-project match 표시.
+   - backend 연계 후보: 기존 `GET /api/graph/global` 활용, project별 graph endpoint와 함께 plugin graph viewer에 표시.
+   - 후속 확장: paper overlay graph, simulation delta highlight, selected node를 Claude Desktop/MCP 검수 workflow로 넘기는 액션.
 
 ## 2026-06-06 Obsidian AI memory repos 비교 메모
 
