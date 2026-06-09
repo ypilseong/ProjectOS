@@ -12,6 +12,18 @@ class Config(BaseSettings):
     DIGEST_ENABLED: bool = False
     DIGEST_HOUR: int = 7
     DIGEST_POLL_SECONDS: int = 300
+    GOOGLE_SYNC_ENABLED: bool = False
+    GOOGLE_SYNC_PROJECT_ID: str = ""
+    GOOGLE_SYNC_POLL_SECONDS: int = 3600
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://127.0.0.1:8002/api/google/oauth/callback"
+    GOOGLE_TOKEN_PATH: str = "./google_token.json"
+    GOOGLE_STATE_PATH: str = "./google_sync_state.json"
+    GOOGLE_GMAIL_QUERY: str = "newer_than:30d"
+    GOOGLE_DRIVE_QUERY: str = "trashed = false"
+    GOOGLE_SYNC_MAX_RESULTS: int = 20
+    BACKEND_PUBLIC_URL: str = "http://127.0.0.1:8002"
     CLAUDE_CODE_MODEL: str = ""
     CLAUDE_TASKS_DIR: str = "/tmp/projectos-claude-tasks"
     CLAUDE_TASK_BARE: bool = False
@@ -34,6 +46,8 @@ class Config(BaseSettings):
     FUZZY_MATCH_THRESHOLD: float = 0.85
     MAX_ONTOLOGY_SAMPLE_CHARS: int = 50000
     PROJECTS_DIR: str = "./projects"
+    INBOX_DIR: str = "./project-inbox"
+    INBOX_PREVIEW_CHARS: int = 1500
     VAULT_DIR: str = "./vault"
     LOG_DIR: str = "../../logs"
     USER_CONFIG_PATH: str = "./user.json"

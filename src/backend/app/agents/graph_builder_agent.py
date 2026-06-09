@@ -22,6 +22,49 @@ RELATION_TYPE_ALIASES = {
 }
 
 
+DOCUMENT_TYPE_RULES = {
+    "cv": """Document-type rules for CV/resume:
+- Treat bullet entries under Education, Experience, Projects, Publications, Awards, and Skills as profile evidence about the document owner unless another subject is explicit.
+- Prefer Person -> Project/Role/Organization/Institution/Publication/Achievement relations and Project -> Skill relations.
+- Extract formal roles, institutions, organizations, publications, awards, GPA, scholarships, and measurable results; avoid section headings such as "Experience" or "Skills" as entities.
+- Skills listed without project context may connect to the document owner with USES_SKILL, but if the same chunk names a project, connect the Project to the Skill too.""",
+    "paper": """Document-type rules for paper/publication:
+- Prioritize Publication, Person, Institution, Organization, Project, Skill/method/model, Event/venue, and concrete contributions or results.
+- Extract paper title, authors, venue/conference/journal, affiliations, datasets, methods, models, systems, and measured findings when present.
+- Use Publication as the central node and connect it to authors, institutions, projects, methods/skills, venues/events, and achievements.
+- Do not create entities for generic sections such as Abstract, Introduction, Related Work, Method, or Conclusion.""",
+    "report": """Document-type rules for report:
+- Prioritize Project, Organization, Person, Role, Event, Skill/method/tool, Achievement, and decisions or outcomes with evidence.
+- Extract executive-summary claims only when they identify concrete entities, measurable outcomes, owners, risks, or recommendations.
+- Connect projects to used skills/tools and involved organizations/people; connect recommendations or milestones only when they are concrete events or achievements.
+- Do not create graph entities for headings, action-item labels, generic risks, or vague business phrases.""",
+    "memo": """Document-type rules for memo/note:
+- Notes and memos are often informal; extract only durable entities that should remain useful after the note is gone.
+- Prioritize named projects, people, organizations, skills/tools, events, decisions, and follow-up achievements.
+- Treat todo/checklist items as Event or Achievement only when they describe a concrete scheduled event, decision, deliverable, or completed result.
+- Avoid transient thoughts, unassigned todos, generic reminders, and raw sentence fragments as entities.""",
+    "email": """Document-type rules for email/message:
+- Prioritize sender/recipient people, organizations, projects, events, commitments, deliverables, and dated decisions.
+- Extract relationships only when the email gives evidence for collaboration, ownership, scheduling, delivery, or use of a skill/tool.
+- Do not create entities for greetings, signatures, quoted thread fragments, boilerplate disclaimers, or generic message labels.
+- If an attachment or linked document is mentioned, extract it only as Publication, Project, or Event when it is named and relevant.""",
+}
+
+
+DOCUMENT_TYPE_ALIASES = {
+    "resume": "cv",
+    "curriculum_vitae": "cv",
+    "publication": "paper",
+    "research_paper": "paper",
+    "article": "paper",
+    "memo": "memo",
+    "note": "memo",
+    "notes": "memo",
+    "mail": "email",
+    "message": "email",
+}
+
+
 class GraphBuilderAgent:
     def __init__(self):
         # Graph extraction is normally a bulk per-chunk loop, so keep it local.
@@ -99,6 +142,12 @@ class GraphBuilderAgent:
             return "USES_SKILL", src_type, src_name, tgt_type, tgt_name
         return normalized, src_type, src_name, tgt_type, tgt_name
 
+    @staticmethod
+    def _document_type_rules(file_type: str) -> str:
+        normalized = (file_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+        normalized = DOCUMENT_TYPE_ALIASES.get(normalized, normalized)
+        return DOCUMENT_TYPE_RULES.get(normalized, "")
+
     async def run(
         self,
         chunks: list[TextChunk],
@@ -106,8 +155,10 @@ class GraphBuilderAgent:
         incremental: bool = False,
         graph_path: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        capture_context: dict[str, dict] | None = None,
     ) -> nx.DiGraph:
         graph = nx.DiGraph()
+        self._capture_context = capture_context or {}
         if incremental and graph_path and Path(graph_path).exists():
             data = json.loads(Path(graph_path).read_text())
             # normalize legacy 'links' key back to 'edges' for nx.node_link_graph compatibility
@@ -165,8 +216,21 @@ class GraphBuilderAgent:
         self, chunk: TextChunk, entity_types: list[str], edge_types: list[str]
     ) -> dict:
         user_ctx = f"\n{self._user_context}\n" if self._user_context else ""
+        doc_rules = self._document_type_rules(chunk.file_type)
+        doc_rules_block = f"\n{doc_rules}\n" if doc_rules else ""
+        capture = getattr(self, "_capture_context", {}).get(chunk.source_file)
+        capture_block = ""
+        if capture:
+            capture_block = (
+                "\nCapture intent for this source:\n"
+                f"- Reason captured: {capture.get('capture_reason', '')}\n"
+                f"- User is currently working on: {capture.get('current_focus', '')}\n"
+                f"- Desired reflection: {capture.get('reflection_intent', '')}\n"
+                "Prioritize entities and relations relevant to this intent. "
+                "Do not invent entities unrelated to the source text.\n"
+            )
         prompt = f"""Extract entities and relations from the text below.
-{user_ctx}
+{capture_block}{user_ctx}
 Allowed entity types: {', '.join(entity_types)}
 Allowed relation types: {', '.join(edge_types)}
 
@@ -192,6 +256,7 @@ Extraction rules:
 - Entity type values and relation values must come from the allowed lists.
 - Entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
 - Prefer one stable label for the same concept within a chunk. When both an acronym and expanded label are present, use the expanded label as the entity name.
+{doc_rules_block}
 
 Text:
 {chunk.text}

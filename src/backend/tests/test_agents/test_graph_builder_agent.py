@@ -224,6 +224,115 @@ async def test_prompt_contains_user_context(tmp_path, monkeypatch, sample_ontolo
     assert "Pilseong Yang" in captured["prompt"]
 
 
+@pytest.mark.asyncio
+async def test_prompt_contains_cv_document_type_rules(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunk = TextChunk("id1", "Experience\n- Built ProjectOS with FastAPI", "cv.pdf", "resume", 1, 0)
+    captured = {}
+
+    async def fake_chat_json(messages, **kw):
+        captured["prompt"] = messages[0]["content"]
+        return {"entities": [], "relations": []}
+
+    with patch.object(agent._llm, "chat_json", side_effect=fake_chat_json):
+        await agent._extract_from_chunk(chunk, ["Person", "Project", "Skill"], ["USES_SKILL"])
+
+    assert "Document-type rules for CV/resume" in captured["prompt"]
+    assert "section headings" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_contains_paper_document_type_rules(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunk = TextChunk("id1", "Abstract\nWe propose a graph RAG method.", "paper.pdf", "publication", 1, 0)
+    captured = {}
+
+    async def fake_chat_json(messages, **kw):
+        captured["prompt"] = messages[0]["content"]
+        return {"entities": [], "relations": []}
+
+    with patch.object(agent._llm, "chat_json", side_effect=fake_chat_json):
+        await agent._extract_from_chunk(chunk, ["Publication", "Skill"], ["USES_SKILL"])
+
+    assert "Document-type rules for paper/publication" in captured["prompt"]
+    assert "Publication as the central node" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_contains_report_and_memo_document_type_rules(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    captured = []
+
+    async def fake_chat_json(messages, **kw):
+        captured.append(messages[0]["content"])
+        return {"entities": [], "relations": []}
+
+    with patch.object(agent._llm, "chat_json", side_effect=fake_chat_json):
+        await agent._extract_from_chunk(
+            TextChunk("id1", "Executive summary", "report.md", "report", 1, 0),
+            ["Project", "Organization"],
+            ["RELATED_TO"],
+        )
+        await agent._extract_from_chunk(
+            TextChunk("id2", "todo: review ProjectOS", "memo.md", "note", 1, 0),
+            ["Project", "Event"],
+            ["RELATED_TO"],
+        )
+
+    assert "Document-type rules for report" in captured[0]
+    assert "Document-type rules for memo/note" in captured[1]
+
+
+@pytest.mark.asyncio
+async def test_graph_builder_extracts_independent_chunks_with_two_workers(monkeypatch, sample_ontology):
+    import asyncio
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    monkeypatch.setattr("app.config.config.GRAPH_BUILD_WORKERS", 2)
+    agent = GraphBuilderAgent()
+    chunks = [
+        TextChunk(f"id{i}", f"chunk {i}", "cv.pdf", "cv", None, i)
+        for i in range(4)
+    ]
+    active = 0
+    max_active = 0
+    progress = []
+
+    async def fake_extract(chunk, entity_types, edge_types):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        skill = {
+            "id0": "Python",
+            "id1": "FastAPI",
+            "id2": "Svelte",
+            "id3": "NetworkX",
+        }[chunk.chunk_id]
+        return {
+            "entities": [{"type": "Skill", "name": skill, "description": "test"}],
+            "relations": [],
+        }
+
+    monkeypatch.setattr(agent, "_extract_from_chunk", fake_extract)
+    graph = await agent.run(
+        chunks,
+        sample_ontology,
+        progress_callback=lambda current, total: progress.append((current, total)),
+    )
+
+    assert max_active == 2
+    assert graph.number_of_nodes() == 4
+    assert progress[-1] == (4, 4)
+
+
 def test_fuzzy_match_finds_similar():
     from app.agents.graph_builder_agent import GraphBuilderAgent
     import networkx as nx

@@ -31,6 +31,8 @@ export const projectsApi = {
   downloadVault: (id) => `/api/projects/${id}/vault/download`,
   runAnalysis: (id) => api.post(`/projects/${id}/analysis`),
   getAnalysis: (id) => api.get(`/projects/${id}/analysis`),
+  runSimulation: (id, data) => api.post(`/projects/${id}/simulation`, data),
+  getSimulation: (id) => api.get(`/projects/${id}/simulation`),
 }
 
 export const globalApi = {

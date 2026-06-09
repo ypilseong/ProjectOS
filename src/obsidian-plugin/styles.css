@@ -48,6 +48,88 @@
   transition: width 0.3s ease;
 }
 
+.pos-workflow {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.pos-workflow-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+  padding: 3px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  font-size: 10px;
+  line-height: 1.2;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.pos-workflow-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.pos-workflow-label {
+  white-space: nowrap;
+}
+
+.pos-workflow-step.is-running {
+  border-color: color-mix(in srgb, var(--interactive-accent) 55%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
+  color: var(--text-normal);
+}
+
+.pos-workflow-step.is-running .pos-workflow-dot {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  animation: pos-workflow-pulse 1.1s ease-in-out infinite;
+}
+
+.pos-workflow-step.is-success {
+  border-color: color-mix(in srgb, var(--background-modifier-success, #2a9d8f) 55%, var(--background-modifier-border));
+  color: var(--text-normal);
+}
+
+.pos-workflow-step.is-success .pos-workflow-dot {
+  background: var(--background-modifier-success, #2a9d8f);
+  color: var(--text-on-accent);
+}
+
+.pos-workflow-step.is-failed {
+  border-color: color-mix(in srgb, var(--text-error, #e76f51) 60%, var(--background-modifier-border));
+  color: var(--text-error);
+}
+
+.pos-workflow-step.is-failed .pos-workflow-dot {
+  background: var(--text-error, #e76f51);
+  color: var(--text-on-accent);
+}
+
+.pos-workflow-step.is-skipped {
+  opacity: 0.65;
+}
+
+@keyframes pos-workflow-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+
 /* Top-level section navigation */
 .pos-nav {
   display: flex;
@@ -149,6 +231,36 @@
 .pos-textarea {
   resize: vertical;
   font-family: inherit;
+}
+
+.pos-file-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pos-file-type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.pos-file-type-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-file-type-row select {
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 
 .pos-actions {

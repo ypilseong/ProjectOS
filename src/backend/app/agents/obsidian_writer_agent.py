@@ -10,6 +10,7 @@ import networkx as nx
 from app.config import config
 from app.models.graph import CareerProfile
 from app.models.vault import VaultFile, VaultNote, VaultPayload
+from app.utils.graph_restructure import is_meta_node
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -68,7 +69,7 @@ class ObsidianWriterAgent:
         nodes = [
             (node_id, data)
             for node_id, data in graph.nodes(data=True)
-            if data.get("type") != "Category"
+            if not is_meta_node(data)
         ]
         for node_id, data in nodes:
             ntype = data.get("type", "Unknown")
@@ -144,6 +145,36 @@ class ObsidianWriterAgent:
             delta=delta,
             progress_callback=progress_callback,
         )
+        self._write_hot(Path(vault_path or config.VAULT_DIR), graph, project_id)
+
+    def _write_hot(
+        self,
+        vault: Path,
+        graph: nx.DiGraph,
+        project_id: str | None,
+    ) -> None:
+        """Write hot.md: compact session-entry context. Best-effort; never fails the build."""
+        try:
+            from app.services.hot_context import compose_hot_context, render_hot_markdown
+            from app.utils.graph_restructure import (
+                build_entity_details,
+                demote_project_context_nodes,
+            )
+
+            rendered, _ = demote_project_context_nodes(graph.copy())
+            rendered, _ = build_entity_details(rendered)
+
+            log_path = vault / "log.md"
+            recent_log = (
+                log_path.read_text(encoding="utf-8").splitlines()
+                if log_path.exists()
+                else None
+            )
+            ctx = compose_hot_context(rendered, project_id, recent_log=recent_log)
+            (vault / "hot.md").write_text(render_hot_markdown(ctx), encoding="utf-8")
+            logger.info(f"Written: {vault / 'hot.md'}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"hot.md generation failed: {exc}")
 
     def _clear_generated_notes(self, vault: Path) -> None:
         """Remove generated entity folders before a full rebuild."""
@@ -279,6 +310,8 @@ class ObsidianWriterAgent:
         edges_canvas = []
 
         for i, node_id in enumerate(graph.nodes):
+            if is_meta_node(graph.nodes[node_id]):
+                continue
             node_type = graph.nodes[node_id].get("type", "Unknown")
             x = float((i % 10) * 250)
             y = float((i // 10) * 200)
@@ -314,7 +347,7 @@ class ObsidianWriterAgent:
         by_type: dict[str, list[tuple[str, str]]] = {}
         for node_id, data in graph.nodes(data=True):
             ntype = data.get("type", "")
-            if ntype == "Category":
+            if is_meta_node(data):
                 continue
             name = data.get("name", "")
             if not name:

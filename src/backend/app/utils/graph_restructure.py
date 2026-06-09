@@ -5,6 +5,11 @@ from app.utils.user_config import get_user_name_variants, load_user_config
 
 logger = get_logger(__name__)
 
+
+def is_meta_node(data: dict) -> bool:
+    """True for provenance/meta nodes that must be excluded from career-graph logic."""
+    return bool(data.get("meta")) or data.get("type") in {"Category", "Capture"}
+
 # Maps individual node type → (hub node id, hub display name)
 _HUB_CONFIG: dict[str, tuple[str, str]] = {
     "Achievement":  ("Category:Achievements",  "Achievements"),
