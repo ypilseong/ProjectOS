@@ -198,6 +198,13 @@
                 <ChatPanel :project-id="projectId" />
               </div>
             </el-tab-pane>
+            <el-tab-pane label="시뮬레이션" name="simulation">
+              <SimulationPanel
+                :project-id="projectId"
+                :graph-data="graphData"
+                @graph-updated="onSimulationGraphUpdated"
+              />
+            </el-tab-pane>
           </el-tabs>
           <div class="step-nav">
             <el-button @click="activeStep = 2" plain>← 이전</el-button>
@@ -237,6 +244,7 @@ import OntologyView from '../components/OntologyView.vue'
 import StatsPanel from '../components/StatsPanel.vue'
 import GraphView from '../components/GraphView.vue'
 import ChatPanel from '../components/ChatPanel.vue'
+import SimulationPanel from '../components/SimulationPanel.vue'
 import VaultTree from '../components/VaultTree.vue'
 import AnalysisDrawer from '../components/AnalysisDrawer.vue'
 import { projectsApi } from '../api/client.js'
@@ -387,6 +395,11 @@ function onTaskFailed(err) {
   currentTaskId.value = null
   running.value = false
   ElMessage.error(err || '작업이 실패했습니다. 다시 시도해 주세요.')
+}
+
+async function onSimulationGraphUpdated(nextGraph) {
+  graphData.value = nextGraph
+  await loadSidebarData()
 }
 
 function goToUpload() {
