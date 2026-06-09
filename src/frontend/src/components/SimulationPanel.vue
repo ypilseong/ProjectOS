@@ -268,6 +268,7 @@ async function loadSimulation() {
   try {
     const response = await projectsApi.getSimulation(props.projectId)
     simulationResult.value = response.data
+    usedGraphData.value = graphFromSnapshot(simulationResult.value?.input_graph_snapshot) || usedGraphData.value
     if (simulationResult.value?.query) query.value = simulationResult.value.query
   } catch (error) {
     simulationResult.value = null
@@ -303,6 +304,11 @@ function statusClass(status) {
 function cloneGraph(graph) {
   if (!graph) return null
   return JSON.parse(JSON.stringify(graph))
+}
+
+function graphFromSnapshot(snapshot) {
+  if (!snapshot) return null
+  return snapshot.graph || snapshot.data || snapshot
 }
 </script>
 

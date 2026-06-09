@@ -635,6 +635,7 @@ async def _run_simulation(
             query=query,
             cv_text=cv_text,
             apply_graph=apply_graph,
+            project_id=project_id,
         )
 
         task_manager.update(task_id, message="시뮬레이션 결과 저장 중...", progress=75)
