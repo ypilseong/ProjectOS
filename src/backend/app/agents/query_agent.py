@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import networkx as nx
 
@@ -10,6 +11,9 @@ from app.utils.logger import get_logger
 from app.utils.hybrid_retrieval import hybrid_search
 
 logger = get_logger(__name__)
+
+
+CITATION_LABEL_RE = re.compile(r"\[[^\[\]\n]+\]")
 
 
 class QueryAgent:
@@ -34,6 +38,92 @@ class QueryAgent:
         async for token in self._llm.stream([{"role": "user", "content": prompt}]):
             yield token
 
+    async def _generate(self, prompt: str) -> str:
+        """Non-streaming single-shot generation. Test seam for enforcement loop."""
+        return await self._llm.chat([{"role": "user", "content": prompt}])
+
+    async def answer_with_enforced_citations(
+        self,
+        question: str,
+        graph: nx.DiGraph,
+        chunks: list[TextChunk],
+        vault_path: str | None = None,
+        max_retries: int = 1,
+    ) -> dict:
+        """Generate an answer and regenerate on citation-validation failure.
+
+        Builds context/allowed-labels once, then generates non-streaming. If the
+        deterministic citation validator rejects the answer, re-prompts the model
+        with the specific problems up to ``max_retries`` times. Returns the final
+        answer with its citation report and the number of generation attempts.
+        """
+        from app.services.citation_validator import validate_citations
+
+        project_id = Path(vault_path).name if vault_path else None
+        context = await self._search_graph(graph, question, project_id=project_id)
+        relevant_chunks = await self._find_relevant_chunks(
+            chunks, question, project_id=project_id)
+        wiki_context = self._load_wiki_context(vault_path, question, context)
+        allowed_labels = self.collect_allowed_citation_labels(
+            context, relevant_chunks, wiki_context)
+        base_prompt = self._build_prompt(question, context, relevant_chunks, wiki_context)
+
+        prompt = base_prompt
+        answer = ""
+        report: dict = {}
+        attempts = 0
+        max_attempts = max(1, max_retries + 1)
+        while attempts < max_attempts:
+            attempts += 1
+            answer = await self._generate(prompt)
+            report = validate_citations(answer, allowed_labels)
+            if report["valid"] or attempts >= max_attempts:
+                break
+            prompt = self._build_citation_correction_prompt(
+                base_prompt, answer, report, allowed_labels)
+
+        return {
+            "answer": answer,
+            "citation_report": report,
+            "allowed_citation_labels": allowed_labels,
+            "attempts": attempts,
+        }
+
+    def _build_citation_correction_prompt(
+        self,
+        base_prompt: str,
+        previous_answer: str,
+        report: dict,
+        allowed_labels: list[str],
+    ) -> str:
+        problems: list[str] = []
+        unknown = report.get("unknown_labels") or []
+        if unknown:
+            problems.append(
+                "- 제공되지 않은 출처 라벨을 사용했습니다: "
+                + ", ".join(unknown)
+                + '. 이 라벨을 제거하고 허용된 라벨로 교체하거나 "출처 불명"으로 표시하세요.'
+            )
+        missing = report.get("missing_citation_sentences") or []
+        if missing:
+            problems.append(
+                '- 다음 문장에는 출처 인용이 없습니다. 허용된 라벨을 붙이거나 "출처 불명"으로 표시하세요:\n'
+                + "\n".join(f"  · {sentence}" for sentence in missing[:5])
+            )
+        problems_str = "\n".join(problems) or "- citation 규칙을 다시 확인하세요."
+        allowed_str = ", ".join(allowed_labels) or "(없음)"
+        return f"""{base_prompt}
+
+## 이전 답변 (citation 규칙 위반)
+{previous_answer}
+
+## 수정 지시
+이전 답변은 citation 규칙을 위반했습니다. 아래 문제를 모두 고쳐 답변을 다시 작성하세요.
+{problems_str}
+
+허용된 출처 라벨: {allowed_str}
+허용된 라벨만 사용하고, 근거가 없으면 "출처 불명"으로 표시하세요."""
+
     async def _search_graph(self, graph: nx.DiGraph, query: str, project_id=None) -> dict:
         if not query.strip():
             return {"nodes": [], "edges": [], "related": []}
@@ -50,6 +140,7 @@ class QueryAgent:
                 "type": graph.nodes[node_id].get("type"),
                 "name": graph.nodes[node_id].get("name", ""),
                 "description": graph.nodes[node_id].get("description", "") or "",
+                "source_files": graph.nodes[node_id].get("source_files", []) or [],
             }
             for node_id in ranked_ids if node_id in graph
         ]
@@ -74,6 +165,7 @@ class QueryAgent:
                     bfs_nodes.append({
                         "type": ndata.get("type"),
                         "name": ndata.get("name"),
+                        "source_files": ndata.get("source_files", []) or [],
                     })
 
         return {"nodes": matched_nodes, "edges": connected_edges, "related": bfs_nodes}
@@ -84,7 +176,42 @@ class QueryAgent:
         items = {c.chunk_id: c.text for c in chunks}
         ranked_ids = await hybrid_search(
             query, project_id, "chunks", items, top_n=3)
-        return [items[cid] for cid in ranked_ids if cid in items]
+        chunk_by_id = {c.chunk_id: c for c in chunks}
+        return [
+            f"{self._chunk_source_label(chunk_by_id[cid])}\n{chunk_by_id[cid].text}"
+            for cid in ranked_ids if cid in chunk_by_id
+        ]
+
+    @staticmethod
+    def _chunk_source_label(chunk: TextChunk) -> str:
+        source_file = chunk.source_file or "unknown"
+        parts = [f"{source_file}#{chunk.chunk_id}"]
+        if chunk.page_num is not None:
+            parts.append(f"p.{chunk.page_num}")
+        if chunk.char_offset is not None:
+            parts.append(f"char:{chunk.char_offset}")
+        return f"[{' '.join(parts)}]"
+
+    def collect_allowed_citation_labels(
+        self,
+        context: dict,
+        chunks: list[str],
+        wiki_context: dict | None = None,
+    ) -> list[str]:
+        labels: set[str] = set()
+        for node in context.get("nodes", []) + context.get("related", []):
+            labels.update(self._node_source_labels(node))
+        for chunk in chunks:
+            labels.update(CITATION_LABEL_RE.findall(chunk))
+        wiki_context = wiki_context or {}
+        labels.update(CITATION_LABEL_RE.findall(wiki_context.get("index") or ""))
+        labels.update(CITATION_LABEL_RE.findall(wiki_context.get("log") or ""))
+        for page in wiki_context.get("pages") or []:
+            content = page.get("content") or ""
+            labels.update(CITATION_LABEL_RE.findall(content))
+            labels.update(self._wiki_source_labels(content))
+        labels.discard("[출처 불명]")
+        return sorted(labels)
 
     def _load_wiki_context(self, vault_path: str | None, query: str, context: dict) -> dict:
         if not vault_path:
@@ -153,7 +280,8 @@ class QueryAgent:
         self, question: str, context: dict, chunks: list[str], wiki_context: dict | None = None
     ) -> str:
         nodes_str = "\n".join(
-            f"- [{n['type']}] {n['name']}: {n['description'] or ''}"
+            f"- [{n['type']}] {n['name']} {self._node_source_label(n)}: "
+            f"{n['description'] or ''}"
             for n in context["nodes"]
         ) or "(관련 노드 없음)"
 
@@ -196,4 +324,38 @@ class QueryAgent:
 {question}
 
 한국어로 상세히 답변하세요. 그래프의 관계를 활용하여 연결된 정보를 포함하세요.
-가능하면 Wiki Pages의 Sources 섹션이나 원본 문서 발췌에 근거해 출처 파일/청크를 함께 언급하세요."""
+모든 사실 주장에는 제공된 출처 라벨을 인용하세요. 원본 문서 발췌는 대괄호 라벨(예: [file#chunk p.1 char:0])을 그대로 사용하고, 관련 노드는 노드에 표시된 source_files 라벨을 사용하세요.
+Wiki Pages의 Sources 섹션에만 근거가 있으면 해당 source 파일명을 인용하세요.
+제공된 컨텍스트로 뒷받침되지 않는 내용은 추측하지 말고 "출처 불명"이라고 명시하세요."""
+
+    @staticmethod
+    def _node_source_label(node: dict) -> str:
+        labels = QueryAgent._node_source_labels(node)
+        if not labels:
+            return "[출처 불명]"
+        return ", ".join(labels)
+
+    @staticmethod
+    def _node_source_labels(node: dict) -> list[str]:
+        source_files = node.get("source_files") or []
+        if isinstance(source_files, str):
+            source_files = [source_files]
+        return sorted(f"[{source}]" for source in source_files if source)
+
+    @staticmethod
+    def _wiki_source_labels(content: str) -> list[str]:
+        labels: set[str] = set()
+        in_sources = False
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if line.startswith("#"):
+                in_sources = "source" in line.lower() or "출처" in line
+                continue
+            if not in_sources or not line:
+                continue
+            if line.startswith(("-", "*")):
+                value = line.lstrip("-* ").strip()
+                value = value.split(":", 1)[-1].strip() if ":" in value else value
+                if value and not value.startswith("["):
+                    labels.add(f"[{value}]")
+        return sorted(labels)
