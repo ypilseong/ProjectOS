@@ -275,6 +275,37 @@ async def apply_merge_candidate(project_id: str, body: MergeCandidateAction):
     return {"merged": True, "merge_candidates": merge_candidates}
 
 
+@router.post("/{project_id}/graph/merge-candidates/reject")
+async def reject_merge_candidate(project_id: str, body: MergeCandidateAction):
+    from app.utils.merge_denylist import add_denied_pair
+
+    p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    if not p.exists():
+        raise HTTPException(404, "Graph not built yet")
+
+    add_denied_pair(project_id, body.keep_id, body.candidate_id)
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    rejected_pair = frozenset({body.keep_id, body.candidate_id})
+    merge_candidates = [
+        c
+        for c in graph.graph.get("merge_candidates", [])
+        if frozenset({c["keep_id"], c["candidate_id"]}) != rejected_pair
+    ]
+    graph.graph["merge_candidates"] = merge_candidates
+
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    p.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {"rejected": True, "merge_candidates": merge_candidates}
+
+
 @router.get("/{project_id}/traces")
 async def get_traces(project_id: str):
     from app.utils.trace import read_traces

@@ -83,3 +83,39 @@ def test_apply_missing_graph_returns_404(client):
     )
 
     assert r.status_code == 404
+
+
+def test_reject_records_denylist_and_drops_candidate(client):
+    _write_graph_with_candidates("proj_reject")
+
+    r = client.post(
+        "/api/projects/proj_reject/graph/merge-candidates/reject",
+        json={"keep_id": "Skill:TensorFlow", "candidate_id": "Skill:Tensorflow"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rejected"] is True
+    # Pair removed from returned candidates.
+    pairs = {
+        frozenset({c["keep_id"], c["candidate_id"]}) for c in body["merge_candidates"]
+    }
+    assert frozenset({"Skill:TensorFlow", "Skill:Tensorflow"}) not in pairs
+    # Denylist file persisted the pair.
+    from app.utils.merge_denylist import load_denylist
+
+    assert frozenset({"Skill:TensorFlow", "Skill:Tensorflow"}) in load_denylist(
+        "proj_reject"
+    )
+    # Both nodes still exist (reject does not mutate graph structure).
+    node_ids = {n["id"] for n in _load_graph_json("proj_reject")["nodes"]}
+    assert {"Skill:TensorFlow", "Skill:Tensorflow"} <= node_ids
+
+
+def test_reject_missing_graph_returns_404(client):
+    r = client.post(
+        "/api/projects/no_project/graph/merge-candidates/reject",
+        json={"keep_id": "Skill:A", "candidate_id": "Skill:B"},
+    )
+
+    assert r.status_code == 404
