@@ -107,3 +107,37 @@ def test_sorted_by_confidence_desc():
 
     confidences = [c["confidence"] for c in candidates]
     assert confidences == sorted(confidences, reverse=True)
+
+
+def test_denylist_excludes_pair():
+    g = nx.DiGraph()
+    g.add_node("Skill:TensorFlow", type="Skill", name="TensorFlow", source_files=[])
+    g.add_node("Skill:Tensorflow", type="Skill", name="Tensorflow", source_files=[])
+
+    denylist = {frozenset({"Skill:TensorFlow", "Skill:Tensorflow"})}
+    candidates = collect_merge_candidates(g, denylist=denylist)
+
+    assert candidates == []
+
+
+def test_denylist_none_keeps_default_behavior():
+    g = nx.DiGraph()
+    g.add_node("Skill:TensorFlow", type="Skill", name="TensorFlow", source_files=[])
+    g.add_node("Skill:Tensorflow", type="Skill", name="Tensorflow", source_files=[])
+
+    assert len(collect_merge_candidates(g, denylist=None)) == 1
+
+
+def test_denylist_only_filters_listed_pair():
+    g = nx.DiGraph()
+    g.add_node("Skill:TensorFlow", type="Skill", name="TensorFlow", source_files=[])
+    g.add_node("Skill:Tensorflow", type="Skill", name="Tensorflow", source_files=[])
+    g.add_node("Skill:PyTorch", type="Skill", name="PyTorch", source_files=[])
+    g.add_node("Skill:Pytorch", type="Skill", name="Pytorch", source_files=[])
+
+    denylist = {frozenset({"Skill:TensorFlow", "Skill:Tensorflow"})}
+    candidates = collect_merge_candidates(g, denylist=denylist)
+
+    pairs = {frozenset({c["keep_id"], c["candidate_id"]}) for c in candidates}
+    assert frozenset({"Skill:TensorFlow", "Skill:Tensorflow"}) not in pairs
+    assert frozenset({"Skill:PyTorch", "Skill:Pytorch"}) in pairs

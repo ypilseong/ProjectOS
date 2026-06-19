@@ -25,7 +25,9 @@ def _node_aliases(data: dict) -> set[str]:
 
 
 def collect_merge_candidates(
-    graph: nx.DiGraph, threshold: float | None = None
+    graph: nx.DiGraph,
+    threshold: float | None = None,
+    denylist: set[frozenset] | None = None,
 ) -> list[dict]:
     """Generate reviewable merge candidates without mutating the graph.
 
@@ -53,6 +55,8 @@ def collect_merge_candidates(
         for i in range(len(node_ids)):
             for j in range(i + 1, len(node_ids)):
                 id_a, id_b = node_ids[i], node_ids[j]
+                if denylist and frozenset({id_a, id_b}) in denylist:
+                    continue
                 data_a, data_b = graph.nodes[id_a], graph.nodes[id_b]
                 name_a = str(data_a.get("name", "")).strip()
                 name_b = str(data_b.get("name", "")).strip()
