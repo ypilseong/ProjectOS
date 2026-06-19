@@ -16,6 +16,21 @@ This is the compact handoff. The previous file had grown into a long chronologic
 
 ## Implemented Recently
 
+### Merge Candidate Review UI (2026-06-19)
+
+- Full-stack review surface for `graph.graph["merge_candidates"]`. Users approve a candidate (applies a real `_merge_node` merge) or reject it (persisted so it never re-surfaces).
+- Backend:
+  - `app/utils/merge_denylist.py` — persists rejected pairs to `projects/{id}/merge_denylist.json` (`load_denylist`/`add_denied_pair`, keyed by `frozenset` of stable `Type:Name` node ids).
+  - `collect_merge_candidates(graph, denylist=...)` now skips denied pairs; the build path passes `load_denylist(project_id)`.
+  - `POST /api/projects/{id}/graph/merge-candidates/apply` — validates nodes exist (409 if stale), `_merge_node`, re-collects candidates, saves, returns `{merged, merge_candidates}`.
+  - `POST /api/projects/{id}/graph/merge-candidates/reject` — records denylist, drops the pair from stored candidates, saves, returns `{rejected, merge_candidates}`.
+- Frontend:
+  - `src/lib/mergeCandidates.js` — pure `extractMergeCandidates(graphData)` (sorted, safe).
+  - `src/components/MergeReviewPanel.vue` — candidate cards with 승인/거부; refetches graph on approve.
+  - ProjectDetail "병합 검토" tab with a candidate-count badge.
+- Verification (2026-06-19): backend `526 passed`; frontend `11 passed` + clean build.
+- Spec: `docs/superpowers/specs/2026-06-19-merge-candidates-review-ui-design.md`; plan: `docs/superpowers/plans/2026-06-19-merge-candidates-review-ui.md`.
+
 ### MCP and Claude Desktop
 
 - Added MCP traffic logging:
@@ -136,8 +151,7 @@ This is the compact handoff. The previous file had grown into a long chronologic
 
 - The 06-10/06-11 update set is committed (2026-06-19) along directory boundaries and pushed. The branch was renamed `hybrid-retrieval` -> `graph-simulation-quality`; it contains all of `main` plus the simulation/clip/MCP-quality work and can fast-forward `main`.
 - `docs/claude-desktop-mcp.md` and the MCP exposed tool list should be rechecked together before commit, because hidden-vs-exposed tool behavior is intentional.
-- Frontend browser behavior is build-tested but not visually verified in this environment.
-- `merge_candidates` are stored in graph JSON but there is no dedicated frontend review UI yet.
+- Frontend browser behavior is build-tested but not visually verified in this environment. This now includes the new "병합 검토" tab — apply/reject flows are covered by backend tests but the UI itself was not exercised in a browser here.
 - Layer labels (`career`/`publication`/`knowledge`) are produced, but downstream ranking and simulation context can still be improved to prefer `career` explicitly.
 - The quality assessment's broader Skill subtype cleanup remains open: `Skill` still mixes concrete skills, methods, tools, models, benchmarks, and research topics.
 - Initial graph quality is structurally sound but semantically noisy; skill/category hub overuse and duplicate vault pages are the main cleanup targets.
@@ -150,7 +164,7 @@ This is the compact handoff. The previous file had grown into a long chronologic
    - `cd src/frontend && npm test && npm run build`
    - `cd src/obsidian-plugin && npm run build`
 2. Validate Claude Desktop connection against port `14006` and confirm MCP JSONL logs are created.
-3. Add a frontend review surface for `graph.graph["merge_candidates"]`.
+3. Visually verify the new "병합 검토" tab in a browser (approve/reject round-trips), and consider an undo UI to clear entries from `merge_denylist.json`.
 4. Make simulation/query context prefer `career` layer nodes before `publication`/`knowledge`.
 5. Decide whether to introduce `ResearchTopic`/`Method`/`Tool` subtypes or stricter Skill promotion rules.
 7. Fix isolated-node re-extraction timeout behavior, then rerun project `21fc2ce5` with `ISOLATED_REEXTRACT_ENABLED=true` for a stricter quality check.
