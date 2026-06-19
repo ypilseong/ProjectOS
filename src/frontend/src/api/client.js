@@ -25,6 +25,7 @@ export const projectsApi = {
   getGraphStats: (id) => api.get(`/projects/${id}/graph/stats`),
   runGraph: (id) => api.post(`/projects/${id}/graph`),
   runGraphIncremental: (id) => api.post(`/projects/${id}/graph/incremental`),
+  cleanupGraph: (id) => api.post(`/projects/${id}/graph/cleanup`),
   getProfiles: (id) => api.get(`/projects/${id}/profiles`),
   runProfiles: (id) => api.post(`/projects/${id}/profiles`),
   getVaultTree: (id) => api.get(`/projects/${id}/vault`),
@@ -33,6 +34,7 @@ export const projectsApi = {
   getAnalysis: (id) => api.get(`/projects/${id}/analysis`),
   runSimulation: (id, data) => api.post(`/projects/${id}/simulation`, data),
   getSimulation: (id) => api.get(`/projects/${id}/simulation`),
+  resolveSimulationEvidence: (id, data) => api.post(`/projects/${id}/simulation/evidence`, data),
 }
 
 export const globalApi = {

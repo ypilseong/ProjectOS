@@ -1,6 +1,25 @@
 <template>
   <div class="project-detail">
-    <el-container style="height: 100vh">
+    <el-container v-if="simulationOnly" class="simulation-only-layout">
+      <el-header class="simulation-only-header">
+        <el-button text @click="router.push(`/projects/${projectId}`)">
+          <el-icon><ArrowLeft /></el-icon> 프로젝트
+        </el-button>
+        <div>
+          <strong>{{ project?.name || 'Simulation' }}</strong>
+          <span>simulation visualization</span>
+        </div>
+      </el-header>
+      <el-main class="simulation-only-main">
+        <SimulationPanel
+          :project-id="projectId"
+          :graph-data="graphData"
+          read-only
+          @graph-updated="onSimulationGraphUpdated"
+        />
+      </el-main>
+    </el-container>
+    <el-container v-else style="height: 100vh">
       <!-- LEFT SIDEBAR -->
       <el-aside width="280px" class="sidebar">
         <div class="sidebar-header">
@@ -252,6 +271,7 @@ import { projectsApi } from '../api/client.js'
 const route = useRoute()
 const router = useRouter()
 const projectId = computed(() => route.params.id)
+const simulationOnly = computed(() => route.path.endsWith('/simulation'))
 
 const project = ref(null)
 const activeStep = ref(0)
@@ -276,6 +296,17 @@ onMounted(async () => {
   try {
     const r = await projectsApi.get(projectId.value)
     project.value = r.data
+
+    if (simulationOnly.value) {
+      try {
+        const gr = await projectsApi.getGraph(projectId.value)
+        graphData.value = gr.data
+      } catch (error) {
+        console.error('Failed to load graph for simulation view:', error)
+      }
+      return
+    }
+
     await loadSidebarData()
     await loadAnalysis()
     try {
@@ -465,6 +496,19 @@ function onProfileFailed(err) {
 
 <style scoped>
 .project-detail { background: #f5f7fa; }
+.simulation-only-layout { min-height: 100vh; background: #f5f7fa; }
+.simulation-only-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #e4e7ed;
+  background: white;
+}
+.simulation-only-header div { display: flex; flex-direction: column; gap: 2px; }
+.simulation-only-header strong { color: #303133; }
+.simulation-only-header span { color: #909399; font-size: 12px; }
+.simulation-only-main { padding: 18px; overflow: auto; }
 .sidebar {
   border-right: 1px solid #e4e7ed;
   padding: 16px;

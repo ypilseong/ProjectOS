@@ -127,11 +127,15 @@ const allTypes = computed(() => {
   return [...new Set(props.graphData.nodes.map(n => n.type || 'Unknown'))]
 })
 
+const defaultVisibleTypes = computed(() =>
+  allTypes.value.filter(type => type !== 'Category')
+)
+
 watch(
   () => props.graphData,
   (data) => {
     if (data) {
-      visibleTypes.value = [...allTypes.value]
+      visibleTypes.value = [...defaultVisibleTypes.value]
       draw(data)
     }
   },
@@ -164,7 +168,7 @@ function draw(data) {
     visibleTypes.value.includes(n.type || 'Unknown')
   )
   const filteredIdSet = new Set(filteredNodes.map(n => n.id))
-  const links = (data.links || []).filter(l => {
+  const links = (data.links || data.edges || []).filter(l => {
     const srcId = typeof l.source === 'object' ? l.source.id : l.source
     const tgtId = typeof l.target === 'object' ? l.target.id : l.target
     return filteredIdSet.has(srcId) && filteredIdSet.has(tgtId)
@@ -295,7 +299,7 @@ function onNodeClick(d, data) {
     return
   }
   selectedNode.value = d
-  const allLinks = data.links || []
+  const allLinks = data.links || data.edges || []
   const neighbors = allLinks
     .filter(l => {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source

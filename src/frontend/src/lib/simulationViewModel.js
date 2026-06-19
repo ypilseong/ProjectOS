@@ -20,6 +20,168 @@ export function buildSimulationViewModel(result) {
     graphDeltaItems,
     evidenceRefs,
     graphChanges: result?.applied_graph_changes || { nodes_added: 0, edges_added: 0 },
+    lineage: buildLineage(result),
+  }
+}
+
+function buildLineage(result) {
+  const raw = result?.lineage || null
+  // Stored results without a lineage block predate the multi-turn engine.
+  const engine = raw?.engine || 'legacy_single_call'
+  const labels = {
+    multi_turn_debate: 'Multi-turn debate',
+    fallback: 'Fallback',
+    legacy_single_call: 'Legacy single-call',
+  }
+  return {
+    engine,
+    label: labels[engine] || engine,
+    isLegacy: engine === 'legacy_single_call',
+    engineVersion: raw?.engine_version || '',
+    turnCalls: numericOrNull(raw?.turn_calls),
+    fallbackTurns: numericOrNull(raw?.fallback_turns),
+    totalTurns: numericOrNull(raw?.total_turns),
+    turnsWithPreviousContext: numericOrNull(raw?.turns_with_previous_context),
+    synthesisModel: raw?.synthesis_model || '',
+    synthesisCompletedAt: raw?.synthesis_completed_at || '',
+  }
+}
+
+const WEAK_CONFIDENCE = 0.6
+
+export function normalizeResolvedEvidence(payload) {
+  const refs = payload?.refs || []
+  const items = refs.map((ref) => normalizeResolvedRef(ref))
+  return {
+    items,
+    unresolvedRefs: payload?.unresolved_refs || items.filter(item => !item.resolved).map(item => item.id),
+  }
+}
+
+export function indexResolvedEvidence(items) {
+  const index = {}
+  for (const item of items || []) {
+    if (item?.id) index[item.id] = item
+  }
+  return index
+}
+
+export function resolveEvidenceRefList(refIds, index) {
+  return (refIds || [])
+    .filter(Boolean)
+    .map(id => (index && index[id]) || unresolvedEvidence(id))
+}
+
+function unresolvedEvidence(id, kind = 'unknown') {
+  return { id, kind, resolved: false, title: id, anchors: [], directness: '', confidence: null, isWeak: false }
+}
+
+function normalizeResolvedRef(ref) {
+  const id = ref?.ref || ''
+  const kind = ref?.kind || 'unknown'
+  const base = { id, kind, resolved: Boolean(ref?.resolved) }
+  if (!ref?.resolved) {
+    return unresolvedEvidence(id, kind)
+  }
+  if (kind === 'chunk') {
+    return {
+      ...base,
+      title: ref.source_file || id,
+      source: ref.source_file || '',
+      page: numericOrNull(ref.page_num),
+      quote: ref.text || '',
+      truncated: Boolean(ref.truncated),
+      anchors: [],
+      directness: 'direct',
+      confidence: null,
+      isWeak: false,
+    }
+  }
+  if (kind === 'node') {
+    const anchors = (ref.evidence || []).map(normalizeAnchor)
+    return {
+      ...base,
+      title: ref.name || ref.node_id || id,
+      nodeType: ref.type || '',
+      description: ref.description || '',
+      source: (ref.source_files || []).join(', '),
+      anchors,
+      ...aggregateAnchors(anchors),
+    }
+  }
+  if (kind === 'edge') {
+    const anchors = ref.evidence ? [normalizeAnchor(ref.evidence)] : []
+    return {
+      ...base,
+      title: `${ref.source_id || ''} -${ref.relation || ''}-> ${ref.target_id || ''}`,
+      relation: ref.relation || '',
+      anchors,
+      ...aggregateAnchors(anchors, numericOrNull(ref.confidence)),
+    }
+  }
+  if (kind === 'report') {
+    const section = ref.section || {}
+    return {
+      ...base,
+      title: section.title || section.section_id || id,
+      quote: section.summary || section.body || '',
+      anchors: [],
+      directness: 'direct',
+      confidence: null,
+      isWeak: false,
+    }
+  }
+  if (kind === 'event') {
+    const event = ref.event || {}
+    return {
+      ...base,
+      title: event.type || event.event_id || id,
+      quote: event.summary || '',
+      anchors: [],
+      directness: 'direct',
+      confidence: null,
+      isWeak: false,
+    }
+  }
+  return { ...base, title: id, anchors: [], directness: '', confidence: null, isWeak: false }
+}
+
+function normalizeAnchor(anchor) {
+  return {
+    source: anchor?.source_file || '',
+    chunkId: anchor?.chunk_id || '',
+    page: numericOrNull(anchor?.page_num),
+    charOffset: numericOrNull(anchor?.char_offset),
+    quote: anchor?.quote || '',
+    confidence: numericOrNull(anchor?.confidence),
+    method: anchor?.method || '',
+    directness: anchor?.directness || '',
+  }
+}
+
+function aggregateAnchors(anchors, edgeConfidence = null) {
+  if (!anchors.length) {
+    return {
+      source: '',
+      page: null,
+      quote: '',
+      directness: edgeConfidence !== null ? 'inferred' : '',
+      confidence: edgeConfidence,
+      isWeak: edgeConfidence === null || edgeConfidence < WEAK_CONFIDENCE,
+    }
+  }
+  const directness = anchors.some(anchor => anchor.directness === 'direct') ? 'direct' : 'inferred'
+  const confidences = anchors.map(anchor => anchor.confidence).filter(value => value !== null)
+  const confidence = confidences.length ? Math.max(...confidences) : edgeConfidence
+  const isWeak = directness !== 'direct' || (confidence !== null && confidence < WEAK_CONFIDENCE)
+  const primary = anchors[0]
+  return {
+    source: primary.source,
+    page: primary.page,
+    quote: primary.quote,
+    directness,
+    confidence,
+    isWeak,
   }
 }
 
@@ -31,24 +193,28 @@ export function buildSimulationOverlay(graphData, result, mode = 'highlight') {
   const nodesById = new Set((graphData?.nodes || []).map(node => node.id))
   const deltaNodes = []
   const deltaLinks = []
+  const ensureDeltaNode = (id, name, type, description = '') => {
+    if (!id || nodesById.has(id) || deltaNodes.some(node => node.id === id)) return
+    deltaNodes.push({
+      id,
+      name: name || id,
+      type: type || 'Simulation',
+      description,
+    })
+  }
 
   for (const item of deltaItems) {
     if (item.type === 'node') {
       const id = item.nodeId || nodesByName.get(nodeNameKey(item.nodeType, item.nodeName)) || `${item.nodeType}:${item.nodeName}`
       nodeIds.add(id)
-      if (!nodesById.has(id)) {
-        deltaNodes.push({
-          id,
-          name: item.nodeName || item.label,
-          type: item.nodeType || 'Simulation',
-          description: item.statusReason || item.evidenceRefs.join(', '),
-        })
-      }
+      ensureDeltaNode(id, item.nodeName || item.label, item.nodeType, item.statusReason || item.evidenceRefs.join(', '))
     } else if (item.type === 'edge') {
       const source = item.sourceId || nodesByName.get(nodeNameKey(item.sourceType, item.sourceName)) || item.sourceName
       const target = item.targetId || nodesByName.get(nodeNameKey(item.targetType, item.targetName)) || item.targetName
       if (source) nodeIds.add(source)
       if (target) nodeIds.add(target)
+      ensureDeltaNode(source, item.sourceName, item.sourceType, 'Simulation graph delta source')
+      ensureDeltaNode(target, item.targetName, item.targetType, 'Simulation graph delta target')
       const key = `${source}->${target}:${item.relation || ''}`
       linkIds.add(key)
       deltaLinks.push({
@@ -70,8 +236,11 @@ export function buildSimulationOverlay(graphData, result, mode = 'highlight') {
       return graphNodeIds.has(source) && graphNodeIds.has(target) &&
         (linkIds.has(link.id) || linkIds.has(`${source}->${target}:${link.relation || ''}`))
     })
+    const validDeltaLinks = deltaLinks.filter(link =>
+      graphNodeIds.has(link.source) && graphNodeIds.has(link.target)
+    )
     return {
-      graphData: { nodes: graphNodes, links: [...existingLinks, ...deltaLinks] },
+      graphData: { nodes: graphNodes, links: [...existingLinks, ...validDeltaLinks] },
       highlightNodeIds: [...nodeIds],
       highlightLinkIds: [...linkIds],
     }
@@ -152,6 +321,8 @@ function buildDebateRounds(result, personas) {
         claim: turn.claim || turn.observation || turn.message || '',
         proposal: turn.proposal || turn.recommendation || '',
         evidenceRefs: nonEmptyStrings(turn.evidence_refs || turn.evidence),
+        respondsTo: turn.responds_to || '',
+        unresolvedQuestions: nonEmptyStrings(turn.unresolved_questions),
       }
     })
     : (result?.timeline || []).map((event, index) => ({
@@ -162,6 +333,8 @@ function buildDebateRounds(result, personas) {
       claim: event.observation || '',
       proposal: event.proposal || '',
       evidenceRefs: [],
+      respondsTo: event.responds_to || '',
+      unresolvedQuestions: nonEmptyStrings(event.unresolved_questions),
     }))
 
   const groups = new Map()
