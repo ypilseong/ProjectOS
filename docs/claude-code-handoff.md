@@ -64,6 +64,7 @@ This is the compact handoff. The previous file had grown into a long chronologic
 - `POST /projects/{id}/simulation/evidence` resolves simulation evidence refs through the same backend logic as MCP.
 - Evidence UI now shows quote/source/page/directness/confidence, supports weak/strong filtering, and uses shared `EvidenceList.vue`.
 - Report and Delta tabs now reuse the same resolved evidence cards instead of plain ref tags.
+- Debate tab turns now render their evidence refs inline via the shared `EvidenceList.vue`, and the Debate tab auto-resolves quote/source on entry (matching Report/Delta). (2026-06-19; verified `npx vitest run` 7 passed + `npm run build` clean; browser visual verification not possible — no GTK libs.)
 - Added Vitest and `src/frontend/src/lib/simulationViewModel.test.js` for evidence view-model helpers.
 
 ### Obsidian Plugin
@@ -136,7 +137,6 @@ This is the compact handoff. The previous file had grown into a long chronologic
 - The 06-10/06-11 update set is committed (2026-06-19) along directory boundaries and pushed. The branch was renamed `hybrid-retrieval` -> `graph-simulation-quality`; it contains all of `main` plus the simulation/clip/MCP-quality work and can fast-forward `main`.
 - `docs/claude-desktop-mcp.md` and the MCP exposed tool list should be rechecked together before commit, because hidden-vs-exposed tool behavior is intentional.
 - Frontend browser behavior is build-tested but not visually verified in this environment.
-- Simulation debate turn evidence refs are not yet rendered through the shared evidence panel.
 - `merge_candidates` are stored in graph JSON but there is no dedicated frontend review UI yet.
 - Layer labels (`career`/`publication`/`knowledge`) are produced, but downstream ranking and simulation context can still be improved to prefer `career` explicitly.
 - The quality assessment's broader Skill subtype cleanup remains open: `Skill` still mixes concrete skills, methods, tools, models, benchmarks, and research topics.
@@ -150,10 +150,9 @@ This is the compact handoff. The previous file had grown into a long chronologic
    - `cd src/frontend && npm test && npm run build`
    - `cd src/obsidian-plugin && npm run build`
 2. Validate Claude Desktop connection against port `14006` and confirm MCP JSONL logs are created.
-3. Finish the simulation Evidence UI by connecting debate turn evidence refs to `EvidenceList.vue`.
-4. Add a frontend review surface for `graph.graph["merge_candidates"]`.
-5. Make simulation/query context prefer `career` layer nodes before `publication`/`knowledge`.
-6. Decide whether to introduce `ResearchTopic`/`Method`/`Tool` subtypes or stricter Skill promotion rules.
+3. Add a frontend review surface for `graph.graph["merge_candidates"]`.
+4. Make simulation/query context prefer `career` layer nodes before `publication`/`knowledge`.
+5. Decide whether to introduce `ResearchTopic`/`Method`/`Tool` subtypes or stricter Skill promotion rules.
 7. Fix isolated-node re-extraction timeout behavior, then rerun project `21fc2ce5` with `ISOLATED_REEXTRACT_ENABLED=true` for a stricter quality check.
 
 ## Files To Inspect First
