@@ -167,6 +167,7 @@
                 <ul v-if="turn.unresolvedQuestions.length" class="turn-questions">
                   <li v-for="question in turn.unresolvedQuestions" :key="question">{{ question }}</li>
                 </ul>
+                <EvidenceList v-if="turn.evidenceRefs.length" :items="refsToEvidence(turn.evidenceRefs)" />
               </div>
             </div>
           </div>
@@ -268,7 +269,7 @@ watch(vm, (value) => {
 })
 
 watch(activeTab, (tab) => {
-  if (['evidence', 'report', 'delta'].includes(tab) && !resolvedEvidence.value.length && vm.value?.evidenceRefs.length) {
+  if (['evidence', 'report', 'delta', 'debate'].includes(tab) && !resolvedEvidence.value.length && vm.value?.evidenceRefs.length) {
     resolveEvidence()
   }
 })
