@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildSimulationViewModel,
   indexResolvedEvidence,
   normalizeResolvedEvidence,
   resolveEvidenceRefList,
@@ -68,5 +69,36 @@ describe('resolveEvidenceRefList', () => {
   it('ignores empty ids', () => {
     expect(resolveEvidenceRefList(['', null, undefined], {})).toEqual([])
     expect(resolveEvidenceRefList(undefined, {})).toEqual([])
+  })
+})
+
+describe('buildSimulationViewModel — debate turn evidence', () => {
+  const result = {
+    debate: {
+      turns: [
+        {
+          id: 'turn_1',
+          round: 1,
+          speaker_id: 'p1',
+          claim: 'Python is the core skill.',
+          proposal: 'Lead with backend work.',
+          evidence_refs: ['node:Skill:Python', 'chunk:cv.pdf#c1'],
+        },
+      ],
+    },
+    personas: [{ id: 'p1', name: 'Backend Advocate', role: 'engineer' }],
+  }
+
+  it('exposes turn evidence refs at vm.debateRounds[].turns[].evidenceRefs', () => {
+    const vm = buildSimulationViewModel(result)
+    const turn = vm.debateRounds[0].turns[0]
+    expect(turn.evidenceRefs).toEqual(['node:Skill:Python', 'chunk:cv.pdf#c1'])
+  })
+
+  it('folds turn evidence refs into the global vm.evidenceRefs', () => {
+    const vm = buildSimulationViewModel(result)
+    const ids = vm.evidenceRefs.map(ref => ref.id)
+    expect(ids).toContain('node:Skill:Python')
+    expect(ids).toContain('chunk:cv.pdf#c1')
   })
 })
