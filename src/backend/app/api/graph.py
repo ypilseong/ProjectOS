@@ -248,6 +248,9 @@ async def apply_merge_candidate(project_id: str, body: MergeCandidateAction):
     from app.utils.merge_review import collect_merge_candidates
     from app.utils.semantic_dedup import _merge_node
 
+    if body.keep_id == body.candidate_id:
+        raise HTTPException(400, "keep_id and candidate_id must be different nodes")
+
     p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
     if not p.exists():
         raise HTTPException(404, "Graph not built yet")
@@ -283,12 +286,12 @@ async def reject_merge_candidate(project_id: str, body: MergeCandidateAction):
     if not p.exists():
         raise HTTPException(404, "Graph not built yet")
 
-    add_denied_pair(project_id, body.keep_id, body.candidate_id)
-
     data = json.loads(p.read_text(encoding="utf-8"))
     if "links" in data and "edges" not in data:
         data["edges"] = data.pop("links")
     graph = nx.node_link_graph(data)
+
+    add_denied_pair(project_id, body.keep_id, body.candidate_id)
 
     rejected_pair = frozenset({body.keep_id, body.candidate_id})
     merge_candidates = [

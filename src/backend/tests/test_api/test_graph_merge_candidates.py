@@ -85,6 +85,20 @@ def test_apply_missing_graph_returns_404(client):
     assert r.status_code == 404
 
 
+def test_apply_identical_ids_returns_400_and_keeps_node(client):
+    _write_graph_with_candidates("proj_self")
+
+    r = client.post(
+        "/api/projects/proj_self/graph/merge-candidates/apply",
+        json={"keep_id": "Skill:TensorFlow", "candidate_id": "Skill:TensorFlow"},
+    )
+
+    assert r.status_code == 400
+    # The node must survive a rejected self-merge.
+    node_ids = {n["id"] for n in _load_graph_json("proj_self")["nodes"]}
+    assert "Skill:TensorFlow" in node_ids
+
+
 def test_reject_records_denylist_and_drops_candidate(client):
     _write_graph_with_candidates("proj_reject")
 
