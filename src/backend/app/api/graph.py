@@ -496,8 +496,11 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
             if capture_added:
                 logger.info(f"Capture meta nodes attached: {capture_added}")
 
+        from app.utils.merge_denylist import load_denylist
         from app.utils.merge_review import collect_merge_candidates
-        merge_candidates = collect_merge_candidates(graph)
+        merge_candidates = collect_merge_candidates(
+            graph, denylist=load_denylist(project_id)
+        )
         graph.graph["merge_candidates"] = merge_candidates
         if merge_candidates:
             logger.info(f"Merge review candidates: {len(merge_candidates)}")
