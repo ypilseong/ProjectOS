@@ -49,36 +49,27 @@ def test_mcp_tools_list_includes_projectos_tools():
     )
 
     names = {tool["name"] for tool in resp.json()["result"]["tools"]}
-    assert "projectos_create_project" in names
-    assert "projectos_upload_file" in names
-    assert "projectos_get_upload_api" in names
-    assert "projectos_list_inbox" in names
-    assert "projectos_preview_inbox_file" in names
-    assert "projectos_ingest_inbox_file" in names
-    assert "projectos_ingest_inbox_files" in names
-    assert "projectos_get_task" in names
-    assert "projectos_build_ontology" in names
-    assert "projectos_build_graph" in names
-    assert "projectos_list_projects" in names
-    assert "projectos_get_ontology" in names
-    assert "projectos_get_graph" in names
-    assert "projectos_get_research_candidates" in names
-    assert "projectos_review_graph" in names
-    assert "projectos_get_graph_summary" in names
-    assert "projectos_get_node_context" in names
-    assert "projectos_get_subgraph" in names
-    assert "projectos_apply_graph_patch" in names
-    assert "projectos_query_career_graph" in names
-    assert "projectos_run_analysis" in names
-    assert "projectos_get_analysis" in names
-    assert "projectos_run_profiles" in names
-    assert "projectos_get_profiles" in names
-    assert "projectos_run_simulation" in names
-    assert "projectos_get_simulation" in names
-    assert "projectos_generate_digest" in names
-    assert "projectos_google_status" in names
-    assert "projectos_google_auth_url" in names
-    assert "projectos_google_sync" in names
+    assert names == {
+        "projectos_create_project",
+        "projectos_get_upload_api",
+        "projectos_list_inbox",
+        "projectos_ingest_inbox_files",
+        "projectos_get_task",
+        "projectos_build_ontology",
+        "projectos_build_graph",
+        "projectos_list_projects",
+        "projectos_get_graph_health",
+        "projectos_get_graph_summary",
+        "projectos_get_node_context",
+        "projectos_apply_graph_patch",
+        "projectos_query_career_graph",
+        "projectos_run_simulation",
+        "projectos_get_simulation_summary",
+        "projectos_get_vault_note",
+        "projectos_google_status",
+        "projectos_google_auth_url",
+        "projectos_google_sync",
+    }
 
 
 def test_mcp_create_project_tool_call():
@@ -106,6 +97,35 @@ def test_mcp_create_project_tool_call():
     assert project is not None
     assert project.name == "Created from MCP"
     assert project.description == "Claude Desktop test"
+
+
+def test_mcp_tool_call_writes_exchange_logs():
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_create_project",
+                "arguments": {
+                    "name": "Logged MCP Project",
+                    "description": "log test",
+                },
+            },
+        },
+    )
+
+    project_id = resp.json()["result"]["structuredContent"]["project_id"]
+    mcp_log = config_path("LOG_DIR") / "mcp.jsonl"
+    project_log = config_path("LOG_DIR") / "projects" / project_id / "mcp.jsonl"
+
+    root_records = [json.loads(line) for line in mcp_log.read_text(encoding="utf-8").splitlines()]
+    project_records = [json.loads(line) for line in project_log.read_text(encoding="utf-8").splitlines()]
+
+    assert any(record["direction"] == "request" and record["tool"] == "projectos_create_project" for record in root_records)
+    assert any(record["direction"] == "response" and record["project_id"] == project_id for record in project_records)
 
 
 def test_mcp_create_project_requires_name():
@@ -339,6 +359,45 @@ def test_mcp_get_task_tool_call():
     assert result["isError"] is False
     assert result["structuredContent"]["task_id"] == task.task_id
     assert result["structuredContent"]["task_type"] == "parse"
+
+
+def test_mcp_get_task_wait_returns_terminal_task():
+    from app.models.project import TaskStatus
+    from app.services.task_manager import task_manager
+
+    project = project_store.create(name="Task MCP Wait", description="")
+    task = task_manager.create(project.project_id, "parse")
+    task_manager.update(
+        task.task_id,
+        status=TaskStatus.COMPLETED,
+        progress=100,
+        message="done",
+    )
+    client = TestClient(app)
+    resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_task",
+                "arguments": {
+                    "task_id": task.task_id,
+                    "wait_seconds": 30,
+                    "previous_status": "running",
+                    "previous_progress": 50,
+                },
+            },
+        },
+    )
+
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    assert result["content"][0]["text"] == "Task parse: completed 100% - done"
+    assert result["structuredContent"]["status"] == "completed"
+    assert result["structuredContent"]["wait"]["result"] == "terminal"
+    assert result["structuredContent"]["wait"]["elapsed_seconds"] == 0
 
 
 def test_mcp_build_ontology_requires_chunks():
@@ -1036,6 +1095,186 @@ def test_mcp_get_simulation_tool_call():
     assert result["structuredContent"]["simulation"]["report"]["answer"] == "ok"
 
 
+def test_mcp_get_simulation_summary_and_delta_tool_calls():
+    project = project_store.create(name="Simulation Compact MCP", description="")
+    project_dir = Path(config.PROJECTS_DIR) / project.project_id
+    payload = {
+        "schema_version": "2.0",
+        "project_id": project.project_id,
+        "run_id": "sim_1",
+        "query": "Improve CV",
+        "status": "completed",
+        "summary": {"title": "Simulation Report", "answer": "ok"},
+        "workflow_steps": [
+            {"id": "load_context", "label": "Load Context", "status": "completed", "summary": "Loaded."}
+        ],
+        "personas": [],
+        "debate": {"turns": []},
+        "event_log": [],
+        "graph_delta": {
+            "nodes": [
+                {
+                    "delta_id": "delta_node_001",
+                    "operation": "add",
+                    "node_id": "Skill:Python",
+                    "type": "Skill",
+                    "name": "Python",
+                    "confidence": 0.8,
+                    "status": "applied",
+                    "evidence_refs": [],
+                }
+            ],
+            "edges": [],
+        },
+        "report_sections": [
+            {
+                "section_id": "section_summary",
+                "title": "Executive Summary",
+                "kind": "executive_summary",
+                "summary": "Short.",
+                "body": "Full report body.",
+            }
+        ],
+    }
+    (project_dir / "simulation.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    client = TestClient(app)
+    summary_resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 81,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_simulation_summary",
+                "arguments": {"project_id": project.project_id},
+            },
+        },
+    )
+    delta_resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 82,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_simulation_graph_delta",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "status": "applied",
+                },
+            },
+        },
+    )
+    section_resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 83,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_simulation_report_section",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "include_body": False,
+                },
+            },
+        },
+    )
+
+    summary = summary_resp.json()["result"]
+    delta = delta_resp.json()["result"]
+    section = section_resp.json()["result"]
+    assert summary["isError"] is False
+    assert summary["structuredContent"]["kind"] == "simulation_summary"
+    assert summary["structuredContent"]["counts"]["graph_delta_nodes"] == 1
+    assert delta["structuredContent"]["items"][0]["delta_id"] == "delta_node_001"
+    assert section["structuredContent"]["selected"]["section_id"] == "section_summary"
+    assert "body" not in section["structuredContent"]["selected"]
+
+
+def test_mcp_get_simulation_event_log_and_evidence_tool_calls():
+    project = project_store.create(name="Simulation Evidence MCP", description="")
+    project_dir = Path(config.PROJECTS_DIR) / project.project_id
+    (project_dir / "chunks.json").write_text(
+        json.dumps([
+            {
+                "chunk_id": "c1",
+                "text": "Python evidence text.",
+                "source_file": "cv.pdf",
+                "file_type": "cv",
+                "page_num": 1,
+                "char_offset": 0,
+            }
+        ]),
+        encoding="utf-8",
+    )
+    graph = nx.DiGraph()
+    graph.add_node("Skill:Python", type="Skill", name="Python", source_files=["cv.pdf"])
+    (project_dir / "graph.json").write_text(
+        json.dumps(nx.node_link_data(graph), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (project_dir / "simulation.json").write_text(
+        json.dumps({
+            "schema_version": "2.0",
+            "run_id": "sim_1",
+            "event_log": [
+                {
+                    "event_id": "evt_001",
+                    "step_id": "debate",
+                    "type": "debate_turn",
+                    "summary": "Reviewed Python evidence.",
+                    "payload_ref": {},
+                }
+            ],
+            "report_sections": [],
+            "graph_delta": {"nodes": [], "edges": []},
+        }),
+        encoding="utf-8",
+    )
+
+    client = TestClient(app)
+    event_resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 84,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_simulation_event_log",
+                "arguments": {"project_id": project.project_id, "step_id": "debate"},
+            },
+        },
+    )
+    evidence_resp = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 85,
+            "method": "tools/call",
+            "params": {
+                "name": "projectos_get_simulation_evidence",
+                "arguments": {
+                    "project_id": project.project_id,
+                    "evidence_refs": ["chunk:cv.pdf#c1", "node:Skill:Python"],
+                    "max_chars_per_ref": 6,
+                },
+            },
+        },
+    )
+
+    event = event_resp.json()["result"]
+    evidence = evidence_resp.json()["result"]
+    assert event["structuredContent"]["events"][0]["event_id"] == "evt_001"
+    assert evidence["structuredContent"]["refs"][0]["text"] == "Python"
+    assert evidence["structuredContent"]["refs"][0]["truncated"] is True
+    assert evidence["structuredContent"]["refs"][1]["name"] == "Python"
+
+
 def test_mcp_google_auth_url_tool_call(monkeypatch):
     from app.config import config
 
@@ -1146,7 +1385,7 @@ def test_mcp_ping():
 
 def test_mcp_tools_list_includes_reconcile_vault():
     from app.mcp_tools import list_mcp_tools
-    names = {t["name"] for t in list_mcp_tools()}
+    names = {t["name"] for t in list_mcp_tools(include_hidden=True)}
     assert "projectos_reconcile_vault" in names
 
 
@@ -1173,12 +1412,9 @@ def test_mcp_reconcile_vault_dry_run_tool_call():
 
 
 def test_mcp_hot_context_tool_registered():
-    client = TestClient(app)
-    resp = client.post(
-        "/mcp",
-        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-    )
-    names = {tool["name"] for tool in resp.json()["result"]["tools"]}
+    from app.mcp_tools import list_mcp_tools
+
+    names = {tool["name"] for tool in list_mcp_tools(include_hidden=True)}
     assert "projectos_get_hot_context" in names
 
 
@@ -1234,7 +1470,7 @@ def _call_clip(client, args, req_id=11):
 
 def test_mcp_ingest_clip_in_tools_list():
     from app.mcp_tools import list_mcp_tools
-    names = {t["name"] for t in list_mcp_tools()}
+    names = {t["name"] for t in list_mcp_tools(include_hidden=True)}
     assert "projectos_ingest_clip" in names
 
 

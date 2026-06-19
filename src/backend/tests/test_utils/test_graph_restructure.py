@@ -4,6 +4,7 @@ import pytest
 from app.utils.graph_restructure import (
     add_category_hubs,
     build_entity_details,
+    cleanup_paper_author_person_nodes,
     demote_project_context_nodes,
 )
 
@@ -179,6 +180,49 @@ def test_project_context_phrase_promotes_embedded_skill():
     assert "Skill:FastAPI backend architecture" not in g
     assert "Skill:FastAPI" in g
     assert g.has_edge("Project:ProjectOS", "Skill:FastAPI")
+
+
+def test_cleanup_paper_author_person_nodes_moves_author_to_publication_metadata(tmp_path, monkeypatch):
+    user_json = tmp_path / "user.json"
+    user_json.write_text('{"name": "양필성", "display_name": "Pilseong Yang"}')
+    monkeypatch.setattr("app.config.config.USER_CONFIG_PATH", str(user_json))
+
+    g = nx.DiGraph()
+    g.add_node("Person:양필성", type="Person", name="양필성", source_files=["resume.pdf"])
+    g.add_node("Person:Jane Doe", type="Person", name="Jane Doe", source_files=["paper.pdf"])
+    g.add_node("Publication:Example Paper", type="Publication", name="Example Paper", source_files=["paper.pdf"])
+    g.add_edge("Person:Jane Doe", "Publication:Example Paper", relation="AUTHORED")
+    g.add_edge("Person:양필성", "Publication:Example Paper", relation="AUTHORED")
+
+    g, removed = cleanup_paper_author_person_nodes(
+        g,
+        {"paper.pdf": "paper", "resume.pdf": "cv"},
+    )
+
+    assert removed == 1
+    assert "Person:Jane Doe" not in g
+    assert "Person:양필성" in g
+    assert g.nodes["Publication:Example Paper"]["paper_authors"][0]["name"] == "Jane Doe"
+
+
+def test_cleanup_paper_author_person_nodes_keeps_profile_person():
+    g = nx.DiGraph()
+    g.add_node(
+        "Person:Jane Doe",
+        type="Person",
+        name="Jane Doe",
+        source_files=["resume.pdf", "paper.pdf"],
+    )
+    g.add_node("Publication:Example Paper", type="Publication", name="Example Paper", source_files=["paper.pdf"])
+    g.add_edge("Person:Jane Doe", "Publication:Example Paper", relation="AUTHORED")
+
+    g, removed = cleanup_paper_author_person_nodes(
+        g,
+        {"paper.pdf": "paper", "resume.pdf": "cv"},
+    )
+
+    assert removed == 0
+    assert "Person:Jane Doe" in g
 
 
 def test_build_entity_details_uses_type_specific_sections(tmp_path, monkeypatch):

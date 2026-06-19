@@ -39,6 +39,29 @@ def test_handle_line_forwards_message():
     assert seen["timeout"] == 5
 
 
+def test_handle_line_writes_stdio_log(tmp_path):
+    bridge = _load_bridge()
+
+    def sender(_url, message, _timeout):
+        return {"jsonrpc": "2.0", "id": message["id"], "result": {"ok": True}}
+
+    response = bridge.handle_line(
+        '{"jsonrpc":"2.0","id":1,"method":"ping"}',
+        url="http://backend/mcp",
+        timeout=5,
+        log_dir=tmp_path,
+        sender=sender,
+    )
+
+    assert response["result"]["ok"] is True
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "mcp-stdio.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["direction"] for record in records] == ["request", "response"]
+    assert records[0]["method"] == "ping"
+
+
 def test_handle_line_returns_parse_error():
     bridge = _load_bridge()
     response = bridge.handle_line(

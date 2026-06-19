@@ -190,6 +190,53 @@ async def get_graph_health(project_id: str):
     return run_health_check(graph, vault_path=str(Path(config.VAULT_DIR) / project_id))
 
 
+@router.post("/{project_id}/graph/cleanup")
+async def cleanup_graph(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    graph_path = proj_dir / "graph.json"
+    if not graph_path.exists():
+        raise HTTPException(status_code=404, detail="Graph not built yet")
+
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    from app.models.graph import TextChunk
+    from app.utils.graph_restructure import cleanup_paper_author_person_nodes
+
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    source_file_types: dict[str, str] = {}
+    chunks_path = proj_dir / "chunks.json"
+    if chunks_path.exists():
+        chunks = [
+            TextChunk(**chunk)
+            for chunk in json.loads(chunks_path.read_text(encoding="utf-8"))
+        ]
+        source_file_types = {chunk.source_file: chunk.file_type for chunk in chunks}
+
+    graph, removed = cleanup_paper_author_person_nodes(graph, source_file_types)
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    graph_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    stats = GraphBuilderAgent().get_stats(graph)
+    project.stats = dataclasses.asdict(stats)
+    project_store.save(project)
+    ObsidianWriterAgent().run(
+        graph,
+        vault_path=str(Path(config.VAULT_DIR) / project_id),
+        delta=False,
+        project_id=project_id,
+    )
+    return {"removed_person_nodes": removed, "stats": dataclasses.asdict(stats)}
+
+
 @router.get("/{project_id}/traces")
 async def get_traces(project_id: str):
     from app.utils.trace import read_traces
@@ -251,6 +298,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         proj_dir = Path(config.PROJECTS_DIR) / project_id
         chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
+        source_file_types = {chunk.source_file: chunk.file_type for chunk in chunks}
         ont_data = json.loads((proj_dir / "ontology.json").read_text(encoding="utf-8"))
         ontology = Ontology(
             entity_types=[EntityTypeDef(**e) for e in ont_data["entity_types"]],
@@ -373,9 +421,15 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         if achievement_refined:
             logger.info(f"Achievement refinement: changed {achievement_refined} node(s)")
 
+        task_manager.update(task_id, message="논문 저자 노드 정리 중...", progress=74)
+        from app.utils.graph_restructure import cleanup_paper_author_person_nodes
+        graph, paper_authors_removed = cleanup_paper_author_person_nodes(graph, source_file_types)
+        if paper_authors_removed:
+            logger.info(f"Paper author cleanup: removed {paper_authors_removed} node(s)")
+
         from app.utils.isolated_reextract import reextract_isolated_nodes
         isolated_before = sum(1 for n in graph.nodes if graph.degree(n) == 0)
-        if isolated_before:
+        if isolated_before and config.ISOLATED_REEXTRACT_ENABLED:
             task_manager.update(
                 task_id,
                 message=f"고립 노드 재추출 중... (0/{isolated_before})",
@@ -402,15 +456,34 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                     "Post re-extraction LLM dedup: "
                     f"merged {post_reextract_llm_merged} node(s)"
                 )
+        elif isolated_before:
+            logger.info(
+                "Isolated re-extraction skipped: "
+                f"{isolated_before} isolated node(s), ISOLATED_REEXTRACT_ENABLED=false"
+            )
 
         from app.utils.graph_restructure import (
             add_category_hubs,
             build_entity_details,
+            cleanup_paper_author_person_nodes,
             demote_project_context_nodes,
         )
+        graph, post_reextract_paper_authors_removed = cleanup_paper_author_person_nodes(
+            graph,
+            source_file_types,
+        )
+        if post_reextract_paper_authors_removed:
+            logger.info(
+                "Post re-extraction paper author cleanup: "
+                f"removed {post_reextract_paper_authors_removed} node(s)"
+            )
         graph, context_demoted = demote_project_context_nodes(graph)
         if context_demoted:
             logger.info(f"Project context nodes demoted: {context_demoted}")
+        from app.utils.graph_promotion import classify_node_layers
+        graph, layer_counts = classify_node_layers(graph, source_file_types)
+        if layer_counts:
+            logger.info(f"Node layers classified: {layer_counts}")
         graph, hubs_added = add_category_hubs(graph)
         if hubs_added:
             logger.info(f"Category hubs added: {hubs_added}")
@@ -422,6 +495,12 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
             capture_added = attach_capture_nodes(graph, captures)
             if capture_added:
                 logger.info(f"Capture meta nodes attached: {capture_added}")
+
+        from app.utils.merge_review import collect_merge_candidates
+        merge_candidates = collect_merge_candidates(graph)
+        graph.graph["merge_candidates"] = merge_candidates
+        if merge_candidates:
+            logger.info(f"Merge review candidates: {len(merge_candidates)}")
 
         graph_agent.save(graph, graph_path)
         hash_store.save()

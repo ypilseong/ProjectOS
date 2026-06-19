@@ -6,6 +6,7 @@ from typing import Any
 import networkx as nx
 
 from app.models.graph import TextChunk
+from app.utils.graph_restructure import is_meta_node
 from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
 from app.utils.logger import get_logger
@@ -14,6 +15,10 @@ logger = get_logger(__name__)
 
 _MAX_CONTEXT_CHARS = 18000
 _MAX_DOC_CHARS = 10000
+_MAX_DEBATE_ROUNDS = 3
+_MAX_DEBATE_PERSONAS = 5
+_MAX_DEBATE_HISTORY_TURNS = 12
+_DEBATE_ENGINE_VERSION = "debate-v2"
 
 
 @dataclass
@@ -100,7 +105,7 @@ JSON만 응답하세요:
 
     def _fallback_personas(self, graph: nx.DiGraph, max_agents: int) -> list[PersonaAgentSpec]:
         candidates = sorted(
-            graph.nodes(data=True),
+            (item for item in graph.nodes(data=True) if not is_meta_node(item[1])),
             key=lambda item: (item[1].get("type") != "Person", -graph.degree(item[0])),
         )
         personas = []
@@ -212,8 +217,9 @@ class ProjectSimulationAgent:
         run_id = run_id or _simulation_run_id(started_at_dt)
         input_graph_snapshot = build_input_graph_snapshot(graph, captured_at=started_at)
         personas = await self._persona_agent.run(graph, chunks, query=query)
+        personas = _ensure_debate_personas(personas)
         environment = await self._environment_agent.run(graph, chunks, personas, query=query)
-        raw_result = await self._simulate(graph, chunks, personas, environment, query, cv_text)
+        raw_result, lineage = await self._simulate(graph, chunks, personas, environment, query, cv_text)
         legacy_result = self._normalize_legacy_result(raw_result, personas, environment, query)
 
         applied = {"nodes_added": 0, "edges_added": 0}
@@ -238,6 +244,7 @@ class ProjectSimulationAgent:
             input_graph_snapshot=input_graph_snapshot,
             applied_graph_changes=applied,
             delta_statuses=delta_statuses,
+            lineage=lineage,
         )
 
     async def _simulate(
@@ -248,16 +255,141 @@ class ProjectSimulationAgent:
         environment: EnvironmentSpec,
         query: str,
         cv_text: str,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         context = build_simulation_context(graph, chunks, query)
+        timeline: list[dict[str, Any]] = []
+        try:
+            timeline = await self._run_persona_debate(context, personas, environment, query)
+            result = await self._synthesize_debate_result(
+                context,
+                personas,
+                environment,
+                query,
+                cv_text,
+                timeline,
+            )
+            return result, self._build_lineage(timeline, engine="multi_turn_debate", synthesized=True)
+        except Exception as exc:
+            logger.warning(f"ProjectSimulationAgent simulation failed, using fallback: {exc}")
+            fallback = fallback_simulation_result(graph, chunks, personas, environment, query)
+            if timeline:
+                fallback["timeline"] = timeline
+            return fallback, self._build_lineage(timeline, engine="fallback", synthesized=False)
+
+    def _build_lineage(
+        self,
+        timeline: list[dict[str, Any]],
+        *,
+        engine: str,
+        synthesized: bool,
+    ) -> dict[str, Any]:
+        turn_calls = sum(1 for turn in timeline if not turn.get("is_fallback"))
+        fallback_turns = sum(1 for turn in timeline if turn.get("is_fallback"))
+        turns_with_context = sum(1 for turn in timeline if turn.get("had_previous_context"))
+        return {
+            "engine": engine,
+            "engine_version": _DEBATE_ENGINE_VERSION,
+            "turn_calls": turn_calls,
+            "fallback_turns": fallback_turns,
+            "total_turns": len(timeline),
+            "turns_with_previous_context": turns_with_context,
+            "synthesis_model": getattr(self._llm, "model_name", "") if synthesized else "",
+            "synthesis_completed_at": datetime.now(timezone.utc).isoformat() if synthesized else "",
+        }
+
+    async def _run_persona_debate(
+        self,
+        context: str,
+        personas: list[PersonaAgentSpec],
+        environment: EnvironmentSpec,
+        query: str,
+    ) -> list[dict[str, Any]]:
+        speakers = personas[:_MAX_DEBATE_PERSONAS]
+        if not speakers:
+            return []
+
+        rounds = max(2, min(int(environment.rounds or 3), _MAX_DEBATE_ROUNDS))
+        timeline: list[dict[str, Any]] = []
+        environment_json = json.dumps(asdict(environment), ensure_ascii=False, indent=2)
+        persona_summaries = "\n".join(
+            f"- {p.agent_id}: {p.name} ({p.role}) goals={p.goals} knowledge={p.knowledge}"
+            for p in speakers
+        )
+
+        for round_no in range(1, rounds + 1):
+            for speaker in speakers:
+                had_previous_context = bool(timeline)
+                history_json = json.dumps(timeline[-_MAX_DEBATE_HISTORY_TURNS:], ensure_ascii=False, indent=2)
+                speaker_json = json.dumps(asdict(speaker), ensure_ascii=False, indent=2)
+                prompt = f"""ProjectOS persona debate의 다음 발언을 생성하세요.
+
+이 호출은 전체 토론 요약이 아니라 한 persona의 한 turn만 생성합니다. 이전 발언을 읽고 동의, 반박, 보완, 새 근거 요청 중 하나 이상을 수행하세요.
+
+라운드: {round_no}/{rounds}
+현재 발언자:
+{speaker_json}
+
+참여 persona:
+{persona_summaries}
+
+환경:
+{environment_json}
+
+이전 발언:
+{history_json or "[]"}
+
+그래프/문서 컨텍스트:
+{context}
+
+사용자 쿼리:
+{query or "(없음)"}
+
+JSON만 응답하세요:
+{{
+  "observation": "이전 발언과 근거를 고려한 관찰 또는 반론",
+  "proposal": "다음 분석/그래프/CV 개선 제안",
+  "evidence_refs": ["근거 노드 id 또는 문서/청크"],
+  "responds_to": "직접 응답한 이전 turn_id 또는 빈 문자열",
+  "unresolved_questions": ["남은 쟁점"]
+}}"""
+                try:
+                    result = await self._llm.chat_json([{"role": "user", "content": prompt}])
+                    turn = _parse_debate_turn(result, speaker, round_no, len(timeline) + 1)
+                    turn["is_fallback"] = False
+                except Exception as exc:
+                    logger.warning(
+                        "ProjectSimulationAgent debate turn failed "
+                        f"round={round_no} speaker={speaker.agent_id}: {exc}"
+                    )
+                    turn = _fallback_debate_turn(speaker, round_no, len(timeline) + 1)
+                    turn["is_fallback"] = True
+                turn["had_previous_context"] = had_previous_context
+                timeline.append(turn)
+        return timeline
+
+    async def _synthesize_debate_result(
+        self,
+        context: str,
+        personas: list[PersonaAgentSpec],
+        environment: EnvironmentSpec,
+        query: str,
+        cv_text: str,
+        timeline: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         personas_json = json.dumps([asdict(p) for p in personas], ensure_ascii=False, indent=2)
         environment_json = json.dumps(asdict(environment), ensure_ascii=False, indent=2)
-        prompt = f"""다음 ProjectOS 페르소나 agent들과 환경 규칙으로 {environment.rounds}라운드 시뮬레이션을 실행하세요.
+        timeline_json = json.dumps(timeline, ensure_ascii=False, indent=2)
+        prompt = f"""다음 ProjectOS 페르소나 debate 로그를 종합해 시뮬레이션 결과를 작성하세요.
 
 출력 목적:
 1. 기존 그래프를 강화할 수 있는 노드/관계 후보
 2. CV가 있으면 CV 보강 초안
 3. 사용자 쿼리가 있으면 쿼리에 대한 분석 리포트
+
+중요:
+- timeline은 아래 실제 순차 debate 로그를 그대로 반영하세요.
+- 서로 다른 persona의 합의/불일치/남은 쟁점을 report와 recommendations에 반영하세요.
+- debate에 없는 새 사실은 만들지 말고 그래프/문서 컨텍스트 근거가 있는 제안만 graph_enhancements에 넣으세요.
 
 페르소나:
 {personas_json}
@@ -267,6 +399,9 @@ class ProjectSimulationAgent:
 
 그래프/문서 컨텍스트:
 {context}
+
+실제 debate 로그:
+{timeline_json or "[]"}
 
 CV 원문:
 {cv_text[:_MAX_DOC_CHARS] or "(chunks에서 추론)"}
@@ -299,11 +434,9 @@ JSON만 응답하세요:
     "evidence": ["근거"]
   }}
 }}"""
-        try:
-            return await self._llm.chat_json([{"role": "user", "content": prompt}])
-        except Exception as exc:
-            logger.warning(f"ProjectSimulationAgent simulation failed, using fallback: {exc}")
-            return fallback_simulation_result(graph, chunks, personas, environment, query)
+        result = await self._llm.chat_json([{"role": "user", "content": prompt}])
+        result["timeline"] = timeline
+        return result
 
     def _normalize_legacy_result(
         self,
@@ -349,6 +482,7 @@ def build_simulation_result_v2(
     input_graph_snapshot: dict[str, Any] | None = None,
     applied_graph_changes: dict[str, int] | None = None,
     delta_statuses: dict[str, list[dict[str, Any]]] | None = None,
+    lineage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     started_at = started_at or legacy_result.get("generated_at") or now.isoformat()
@@ -356,6 +490,7 @@ def build_simulation_result_v2(
     run_id = run_id or _simulation_run_id(now)
     applied_graph_changes = applied_graph_changes or {"nodes_added": 0, "edges_added": 0}
     delta_statuses = delta_statuses or _proposed_delta_statuses(legacy_result.get("graph_enhancements", {}))
+    lineage = lineage or _default_lineage(legacy_result.get("timeline", []))
 
     graph_delta = _build_graph_delta(legacy_result.get("graph_enhancements", {}), delta_statuses)
     report_sections = _build_report_sections(legacy_result, graph_delta)
@@ -402,6 +537,7 @@ def build_simulation_result_v2(
         "graph_delta": graph_delta,
         "report_sections": report_sections,
         "input_graph_snapshot": input_graph_snapshot,
+        "lineage": lineage,
         "legacy": {
             "generated_at": legacy_result.get("generated_at"),
             "query": query,
@@ -425,12 +561,14 @@ def build_simulation_result_v2(
 
 
 def build_simulation_context(graph: nx.DiGraph, chunks: list[TextChunk], query: str = "") -> str:
+    analytical_ids = [n for n, d in graph.nodes(data=True) if not is_meta_node(d)]
+
     type_counts: dict[str, int] = {}
-    for _, data in graph.nodes(data=True):
-        ntype = data.get("type", "Unknown")
+    for node_id in analytical_ids:
+        ntype = graph.nodes[node_id].get("type", "Unknown")
         type_counts[ntype] = type_counts.get(ntype, 0) + 1
 
-    important_nodes = sorted(graph.nodes, key=lambda node: -graph.degree(node))[:30]
+    important_nodes = sorted(analytical_ids, key=lambda node: -graph.degree(node))[:30]
     node_lines = []
     for node_id in important_nodes:
         data = graph.nodes[node_id]
@@ -439,11 +577,15 @@ def build_simulation_context(graph: nx.DiGraph, chunks: list[TextChunk], query: 
         )
 
     edge_lines = []
-    for source, target, data in list(graph.edges(data=True))[:80]:
+    for source, target, data in graph.edges(data=True):
+        if is_meta_node(graph.nodes[source]) or is_meta_node(graph.nodes[target]):
+            continue
         edge_lines.append(
             f"- {graph.nodes[source].get('name', source)} --{data.get('relation', '')}--> "
             f"{graph.nodes[target].get('name', target)}"
         )
+        if len(edge_lines) >= 80:
+            break
 
     doc_text = "\n\n".join(
         f"[{chunk.source_file}#{chunk.chunk_id}]\n{chunk.text}"
@@ -520,13 +662,16 @@ def _build_debate(timeline: list[dict[str, Any]], personas: list[dict[str, Any]]
     for idx, item in enumerate(timeline or []):
         speaker_id = str(item.get("agent_id") or item.get("speaker_id") or "")
         turns.append({
-            "turn_id": f"turn_{idx + 1:03d}",
+            "turn_id": str(item.get("turn_id") or f"turn_{idx + 1:03d}"),
             "round": int(item.get("round") or idx + 1),
             "speaker_id": speaker_id,
             "stance": "review" if speaker_id in persona_ids else "",
             "claim": str(item.get("observation") or item.get("claim") or ""),
             "evidence_refs": _evidence_refs(item.get("evidence_refs") or item.get("evidence")),
             "proposal": str(item.get("proposal") or item.get("recommendation") or ""),
+            "responds_to": str(item.get("responds_to") or ""),
+            "had_previous_context": bool(item.get("had_previous_context")),
+            "is_fallback": bool(item.get("is_fallback")),
             "unresolved_questions": [
                 str(value)
                 for value in item.get("unresolved_questions", [])
@@ -794,6 +939,34 @@ def _status_at(statuses: list[dict[str, Any]], idx: int) -> dict[str, Any]:
     return {"status": "proposed", "status_reason": ""}
 
 
+def _simulation_anchor(evidence_text: Any, confidence: float | None) -> dict[str, Any]:
+    """Provenance anchor for a simulation-promoted node/edge (no source chunk)."""
+    return {
+        "source_file": "simulation",
+        "chunk_id": "",
+        "page_num": None,
+        "char_offset": 0,
+        "quote": str(evidence_text or ""),
+        "confidence": confidence,
+        "method": "simulation",
+        "directness": "inferred",
+    }
+
+
+def _default_lineage(timeline: list[dict[str, Any]]) -> dict[str, Any]:
+    """Lineage for results assembled outside the live debate engine (e.g. legacy)."""
+    return {
+        "engine": "legacy_single_call",
+        "engine_version": "legacy",
+        "turn_calls": 0,
+        "fallback_turns": 0,
+        "total_turns": len(timeline or []),
+        "turns_with_previous_context": 0,
+        "synthesis_model": "",
+        "synthesis_completed_at": "",
+    }
+
+
 def _proposed_delta_statuses(enhancements: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     return {
         "nodes": [{"status": "proposed", "status_reason": ""} for _ in enhancements.get("nodes", []) or []],
@@ -859,6 +1032,7 @@ def _apply_graph_enhancements_with_status(
             source_files=["simulation"],
             source_chunk_ids=[],
             attributes={"simulation_evidence": node.get("evidence", "")},
+            evidence=[_simulation_anchor(node.get("evidence"), _numeric_or_none(node.get("confidence")))],
         )
         node_statuses.append({"status": "applied", "status_reason": "", "node_id": node_id})
         nodes_added += 1
@@ -890,13 +1064,14 @@ def _apply_graph_enhancements_with_status(
                 "target_id": target_id,
             })
             continue
+        confidence = float(edge.get("confidence") or 0.6)
         graph.add_edge(
             source_id,
             target_id,
             relation=str(edge.get("relation") or "RELATED_TO"),
-            confidence=float(edge.get("confidence") or 0.6),
+            confidence=confidence,
             source_chunk_id="simulation",
-            evidence=str(edge.get("evidence") or ""),
+            evidence=_simulation_anchor(edge.get("evidence"), confidence),
         )
         edge_statuses.append({
             "status": "applied",
@@ -923,6 +1098,116 @@ def _find_node_id(graph: nx.DiGraph, ntype: str, name: str) -> str | None:
     return None
 
 
+def _ensure_debate_personas(personas: list[PersonaAgentSpec]) -> list[PersonaAgentSpec]:
+    if len(personas) >= 2:
+        return personas
+
+    next_id = _next_agent_id(personas)
+    if len(personas) == 1:
+        return [
+            *personas,
+            PersonaAgentSpec(
+                agent_id=next_id,
+                name="Evidence Auditor",
+                role="Counterpoint reviewer",
+                goals=[
+                    "기존 persona의 제안을 검증하고 과잉 해석, 근거 부족, 누락된 리스크를 찾는다."
+                ],
+                knowledge=["그래프 노드, 관계, 문서 청크의 직접 근거를 우선한다."],
+                communication_style="비판적 검토, 근거 요구, 보수적 판단",
+                source_nodes=[],
+            ),
+        ]
+
+    return [
+        PersonaAgentSpec(
+            agent_id="agent_1",
+            name="Graph Reviewer",
+            role="Graph evidence perspective",
+            goals=["그래프 구조와 중심 노드 기준으로 강화 후보를 찾는다."],
+            knowledge=["ProjectOS graph structure"],
+            communication_style="구조적 분석, 근거 중심",
+            source_nodes=[],
+        ),
+        PersonaAgentSpec(
+            agent_id="agent_2",
+            name="Evidence Auditor",
+            role="Counterpoint reviewer",
+            goals=["제안의 근거 수준과 불확실성을 검증한다."],
+            knowledge=["Source-backed validation"],
+            communication_style="비판적 검토, 보수적 판단",
+            source_nodes=[],
+        ),
+    ]
+
+
+def _next_agent_id(personas: list[PersonaAgentSpec]) -> str:
+    used = {persona.agent_id for persona in personas}
+    idx = len(used) + 1
+    while f"agent_{idx}" in used:
+        idx += 1
+    return f"agent_{idx}"
+
+
+def _parse_debate_turn(
+    result: dict[str, Any],
+    speaker: PersonaAgentSpec,
+    round_no: int,
+    turn_no: int,
+) -> dict[str, Any]:
+    payload = result
+    timeline = result.get("timeline")
+    if isinstance(timeline, list) and timeline:
+        matching = [
+            item
+            for item in timeline
+            if str(item.get("agent_id") or item.get("speaker_id") or "") == speaker.agent_id
+        ]
+        payload = matching[0] if matching else timeline[0]
+
+    return {
+        "turn_id": f"turn_{turn_no:03d}",
+        "round": round_no,
+        "agent_id": speaker.agent_id,
+        "observation": str(
+            payload.get("observation")
+            or payload.get("claim")
+            or payload.get("message")
+            or ""
+        ),
+        "proposal": str(
+            payload.get("proposal")
+            or payload.get("recommendation")
+            or payload.get("action")
+            or ""
+        ),
+        "evidence_refs": _evidence_refs(payload.get("evidence_refs") or payload.get("evidence")),
+        "responds_to": str(payload.get("responds_to") or ""),
+        "unresolved_questions": [
+            str(value)
+            for value in payload.get("unresolved_questions", [])
+            if value
+        ],
+    }
+
+
+def _fallback_debate_turn(
+    speaker: PersonaAgentSpec,
+    round_no: int,
+    turn_no: int,
+) -> dict[str, Any]:
+    return {
+        "turn_id": f"turn_{turn_no:03d}",
+        "round": round_no,
+        "agent_id": speaker.agent_id,
+        "observation": f"{speaker.name} 관점에서 그래프와 문서 근거를 재검토했습니다.",
+        "proposal": "근거가 명확한 항목만 그래프/CV 개선 후보로 유지하세요.",
+        "evidence_refs": speaker.source_nodes,
+        "responds_to": "",
+        "unresolved_questions": [],
+    }
+
+
 def fallback_simulation_result(
     graph: nx.DiGraph,
     chunks: list[TextChunk],
@@ -930,7 +1215,8 @@ def fallback_simulation_result(
     environment: EnvironmentSpec,
     query: str,
 ) -> dict[str, Any]:
-    top_nodes = sorted(graph.nodes, key=lambda node: -graph.degree(node))[:5]
+    analytical_ids = [n for n, d in graph.nodes(data=True) if not is_meta_node(d)]
+    top_nodes = sorted(analytical_ids, key=lambda node: -graph.degree(node))[:5]
     evidence = [
         f"{graph.nodes[node].get('name', node)} ({graph.nodes[node].get('type', 'Unknown')})"
         for node in top_nodes

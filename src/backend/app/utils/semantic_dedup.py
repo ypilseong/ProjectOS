@@ -228,4 +228,17 @@ def _merge_node(graph: nx.DiGraph, canonical_id: str, dup_id: str):
     can_chunks = set(graph.nodes[canonical_id].get("source_chunk_ids", []))
     graph.nodes[canonical_id]["source_chunk_ids"] = list(can_chunks | dup_chunks)
 
+    # Preserve the merged-away surface form (and its aliases) so the original
+    # label is still discoverable after dedup. Never alias the canonical name.
+    canonical_name = graph.nodes[canonical_id].get("name", "")
+    aliases = set(graph.nodes[canonical_id].get("aliases", []) or [])
+    aliases |= set(graph.nodes[dup_id].get("aliases", []) or [])
+    dup_name = graph.nodes[dup_id].get("name", "")
+    if dup_name:
+        aliases.add(dup_name)
+    aliases.discard(canonical_name)
+    aliases.discard("")
+    if aliases:
+        graph.nodes[canonical_id]["aliases"] = sorted(aliases)
+
     graph.remove_node(dup_id)

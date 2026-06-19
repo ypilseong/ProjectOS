@@ -31,7 +31,7 @@ def _tool(
     }
 
 
-def list_mcp_tools() -> list[dict]:
+def _all_mcp_tools() -> list[dict]:
     return [
         _tool(
             "projectos_create_project",
@@ -161,8 +161,39 @@ def list_mcp_tools() -> list[dict]:
         ),
         _tool(
             "projectos_get_task",
-            "Return the status/progress of a ProjectOS background task.",
-            {"task_id": {"type": "string"}},
+            (
+                "Return the status/progress of a ProjectOS background task. "
+                "For long-running tasks, pass wait_seconds with the previous status/progress "
+                "so the call returns only when status changes, progress advances, or timeout expires."
+            ),
+            {
+                "task_id": {"type": "string"},
+                "wait_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 60,
+                    "default": 0,
+                    "description": "Optional server-side wait window before returning task status.",
+                },
+                "previous_status": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Last status observed by the caller.",
+                },
+                "previous_progress": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Last progress value observed by the caller.",
+                },
+                "min_progress_delta": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 5,
+                    "description": "Return early when progress advances by at least this amount.",
+                },
+            },
             ["task_id"],
         ),
         _tool(
@@ -371,6 +402,77 @@ def list_mcp_tools() -> list[dict]:
             ["project_id"],
         ),
         _tool(
+            "projectos_get_simulation_summary",
+            "Return a compact read-only summary of the latest or selected simulation run.",
+            {
+                "project_id": {"type": "string"},
+                "run_id": {"type": "string", "default": ""},
+                "include_workflow": {"type": "boolean", "default": True},
+                "max_steps": {"type": "integer", "minimum": 0, "maximum": 20, "default": 12},
+            },
+            ["project_id"],
+        ),
+        _tool(
+            "projectos_get_simulation_graph_delta",
+            "Return compact simulation graph deltas with optional status/type filters.",
+            {
+                "project_id": {"type": "string"},
+                "run_id": {"type": "string", "default": ""},
+                "status": {
+                    "type": "string",
+                    "enum": ["", "proposed", "applied", "skipped", "rejected"],
+                    "default": "",
+                },
+                "item_type": {
+                    "type": "string",
+                    "enum": ["all", "nodes", "edges"],
+                    "default": "all",
+                },
+                "max_items": {"type": "integer", "minimum": 0, "maximum": 100, "default": 20},
+                "sort": {
+                    "type": "string",
+                    "enum": ["confidence_asc", "confidence_desc", "status", "operation"],
+                    "default": "confidence_asc",
+                },
+            },
+            ["project_id"],
+        ),
+        _tool(
+            "projectos_get_simulation_report_section",
+            "Return one simulation report section instead of the full simulation payload.",
+            {
+                "project_id": {"type": "string"},
+                "run_id": {"type": "string", "default": ""},
+                "section_id": {"type": "string", "default": ""},
+                "kind": {"type": "string", "default": "executive_summary"},
+                "include_body": {"type": "boolean", "default": True},
+            },
+            ["project_id"],
+        ),
+        _tool(
+            "projectos_get_simulation_event_log",
+            "Return compact simulation workflow events with optional step/type filters.",
+            {
+                "project_id": {"type": "string"},
+                "run_id": {"type": "string", "default": ""},
+                "step_id": {"type": "string", "default": ""},
+                "event_type": {"type": "string", "default": ""},
+                "max_events": {"type": "integer", "minimum": 0, "maximum": 200, "default": 50},
+            },
+            ["project_id"],
+        ),
+        _tool(
+            "projectos_get_simulation_evidence",
+            "Resolve selected simulation evidence refs without dumping all chunks or graph data.",
+            {
+                "project_id": {"type": "string"},
+                "run_id": {"type": "string", "default": ""},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                "max_chars_per_ref": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1200},
+            },
+            ["project_id", "evidence_refs"],
+        ),
+        _tool(
             "projectos_generate_digest",
             "Generate today's deterministic ProjectOS digest for a built project.",
             {"project_id": {"type": "string"}},
@@ -435,6 +537,36 @@ def list_mcp_tools() -> list[dict]:
     ]
 
 
+_EXPOSED_MCP_TOOL_NAMES = {
+    "projectos_create_project",
+    "projectos_get_upload_api",
+    "projectos_list_inbox",
+    "projectos_ingest_inbox_files",
+    "projectos_get_task",
+    "projectos_build_ontology",
+    "projectos_build_graph",
+    "projectos_list_projects",
+    "projectos_get_graph_health",
+    "projectos_get_graph_summary",
+    "projectos_get_node_context",
+    "projectos_apply_graph_patch",
+    "projectos_query_career_graph",
+    "projectos_run_simulation",
+    "projectos_get_simulation_summary",
+    "projectos_get_vault_note",
+    "projectos_google_status",
+    "projectos_google_auth_url",
+    "projectos_google_sync",
+}
+
+
+def list_mcp_tools(*, include_hidden: bool = False) -> list[dict]:
+    tools = _all_mcp_tools()
+    if include_hidden:
+        return tools
+    return [tool for tool in tools if tool["name"] in _EXPOSED_MCP_TOOL_NAMES]
+
+
 def _text_result(text: str, structured: dict | None = None, is_error: bool = False) -> dict:
     result = {"content": [{"type": "text", "text": text}], "isError": is_error}
     if structured is not None:
@@ -449,6 +581,11 @@ def _project_dir(project_id: str) -> Path:
 def _require_project(project_id: str) -> None:
     if not project_store.get(project_id):
         raise ValueError("Project not found")
+
+
+def _optional_string(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _load_graph(project_id: str) -> nx.DiGraph:
@@ -689,11 +826,62 @@ async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
             from app.services.task_manager import task_manager
 
             task_id = str(args["task_id"])
+            wait_seconds = max(0, min(int(args.get("wait_seconds") or 0), 60))
+            min_progress_delta = max(1, min(int(args.get("min_progress_delta") or 5), 100))
+            previous_status = str(args.get("previous_status") or "").strip()
+            previous_progress_arg = args.get("previous_progress")
+            previous_progress = (
+                int(previous_progress_arg)
+                if previous_progress_arg is not None
+                else None
+            )
+            elapsed_seconds = 0
+            wait_result = "not_waited"
+
             task = task_manager.get(task_id)
             if not task:
                 raise ValueError("Task not found")
+            if wait_seconds > 0:
+                baseline_status = previous_status or str(task.status.value)
+                baseline_progress = (
+                    previous_progress
+                    if previous_progress is not None
+                    else int(task.progress or 0)
+                )
+                wait_result = "timeout"
+                for elapsed_seconds in range(wait_seconds + 1):
+                    task = task_manager.get(task_id)
+                    if not task:
+                        raise ValueError("Task not found")
+                    status_value = str(task.status.value)
+                    progress_value = int(task.progress or 0)
+                    if status_value in {"completed", "failed"}:
+                        wait_result = "terminal"
+                        break
+                    if (
+                        status_value != baseline_status
+                        or progress_value - baseline_progress >= min_progress_delta
+                    ):
+                        wait_result = "changed"
+                        break
+                    if elapsed_seconds == wait_seconds:
+                        break
+                    await asyncio.sleep(1)
             payload = task.model_dump(mode="json")
-            return _text_result(json.dumps(payload, ensure_ascii=False), payload)
+            if wait_seconds > 0:
+                payload["wait"] = {
+                    "result": wait_result,
+                    "elapsed_seconds": elapsed_seconds,
+                    "wait_seconds": wait_seconds,
+                    "min_progress_delta": min_progress_delta,
+                }
+            text = (
+                f"Task {payload['task_type']}: {payload['status']} "
+                f"{payload['progress']}% - {payload.get('message') or ''}"
+            ).strip()
+            if payload.get("error"):
+                text = f"{text} error={payload['error']}"
+            return _text_result(text, payload)
 
         if name == "projectos_build_ontology":
             from app.api.graph import _run_ontology
@@ -1109,6 +1297,119 @@ async def call_mcp_tool(name: str, arguments: dict | None = None) -> dict:
                 json.dumps(simulation, ensure_ascii=False),
                 {"simulation": simulation},
             )
+
+        if name == "projectos_get_simulation_summary":
+            from app.services.simulation_context import (
+                adapt_simulation_summary,
+                load_simulation_result,
+            )
+
+            project_id = str(args["project_id"])
+            _require_project(project_id)
+            simulation = load_simulation_result(project_id, _optional_string(args.get("run_id")))
+            payload = adapt_simulation_summary(
+                simulation,
+                project_id=project_id,
+                include_workflow=bool(args.get("include_workflow", True)),
+                max_steps=int(args.get("max_steps", 12)),
+            )
+            text = (
+                f"{payload['summary'].get('title', 'Simulation')} "
+                f"({payload['status']}): "
+                f"{payload['counts']['graph_delta_nodes']} node deltas, "
+                f"{payload['counts']['graph_delta_edges']} edge deltas, "
+                f"{payload['counts']['report_sections']} report sections."
+            )
+            return _text_result(text, payload)
+
+        if name == "projectos_get_simulation_graph_delta":
+            from app.services.simulation_context import (
+                adapt_simulation_graph_delta,
+                load_simulation_result,
+            )
+
+            project_id = str(args["project_id"])
+            _require_project(project_id)
+            simulation = load_simulation_result(project_id, _optional_string(args.get("run_id")))
+            payload = adapt_simulation_graph_delta(
+                simulation,
+                project_id=project_id,
+                status=_optional_string(args.get("status")),
+                item_type=str(args.get("item_type") or "all"),
+                max_items=int(args.get("max_items", 20)),
+                sort=str(args.get("sort") or "confidence_asc"),
+            )
+            lines = [
+                f"{item['delta_id']} [{item['item_type']} {item['status']}]: {item['label']}"
+                for item in payload["items"]
+            ]
+            text = "\n".join(lines) or "No simulation graph deltas matched the filters."
+            return _text_result(text, payload)
+
+        if name == "projectos_get_simulation_report_section":
+            from app.services.simulation_context import (
+                adapt_simulation_report_section,
+                load_simulation_result,
+            )
+
+            project_id = str(args["project_id"])
+            _require_project(project_id)
+            simulation = load_simulation_result(project_id, _optional_string(args.get("run_id")))
+            payload = adapt_simulation_report_section(
+                simulation,
+                project_id=project_id,
+                section_id=_optional_string(args.get("section_id")),
+                kind=_optional_string(args.get("kind")) or "executive_summary",
+                include_body=bool(args.get("include_body", True)),
+            )
+            selected = payload["selected"]
+            text = f"{selected.get('title', 'Report section')}: {selected.get('summary', '')}"
+            return _text_result(text, payload)
+
+        if name == "projectos_get_simulation_event_log":
+            from app.services.simulation_context import (
+                adapt_simulation_event_log,
+                load_simulation_result,
+            )
+
+            project_id = str(args["project_id"])
+            _require_project(project_id)
+            simulation = load_simulation_result(project_id, _optional_string(args.get("run_id")))
+            payload = adapt_simulation_event_log(
+                simulation,
+                project_id=project_id,
+                step_id=_optional_string(args.get("step_id")),
+                event_type=_optional_string(args.get("event_type")),
+                max_events=int(args.get("max_events", 50)),
+            )
+            lines = [
+                f"{event.get('event_id')} [{event.get('type')}]: {event.get('summary', '')}"
+                for event in payload["events"]
+            ]
+            text = "\n".join(lines) or "No simulation events matched the filters."
+            return _text_result(text, payload)
+
+        if name == "projectos_get_simulation_evidence":
+            from app.services.simulation_context import (
+                load_simulation_result,
+                resolve_simulation_evidence,
+            )
+
+            project_id = str(args["project_id"])
+            _require_project(project_id)
+            simulation = load_simulation_result(project_id, _optional_string(args.get("run_id")))
+            refs = [str(ref) for ref in args.get("evidence_refs", [])]
+            payload = resolve_simulation_evidence(
+                project_id,
+                simulation,
+                refs,
+                max_chars_per_ref=int(args.get("max_chars_per_ref", 1200)),
+            )
+            text = (
+                f"Resolved {len(payload['refs']) - len(payload['unresolved_refs'])}/"
+                f"{len(payload['refs'])} simulation evidence refs."
+            )
+            return _text_result(text, payload)
 
         if name == "projectos_generate_digest":
             project_id = str(args["project_id"])

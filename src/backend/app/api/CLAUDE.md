@@ -1,15 +1,21 @@
 # API — ProjectOS
 
-FastAPI 라우터 4개. `app/main.py` 에서 등록.
+FastAPI 라우터 10개. `app/main.py` 에서 `/api/*` prefix로 등록 (mcp만 `/mcp`).
 
 ## 라우터 목록
 
 | 파일 | prefix | 주요 엔드포인트 |
 |------|--------|----------------|
-| projects.py | /projects | CRUD, 파일 업로드, vault 트리 |
-| graph.py | /projects/{id} | 온톨로지 생성, 그래프 구축, 통계 |
-| chat.py | /projects/{id} | SSE 채팅 스트리밍 |
-| tasks.py | /tasks | 태스크 상태, SSE 진행 스트림 |
+| projects.py | /api/projects | CRUD, 파일 업로드, vault 트리 |
+| graph.py | /api/projects/{id}, /api/graph | 온톨로지 생성, 그래프 구축, 통계, 전역 그래프 |
+| chat.py | /api/projects/{id} | SSE 채팅 스트리밍 |
+| tasks.py | /api/tasks | 태스크 상태, SSE 진행 스트림 |
+| user.py | /api/user | 사용자 정보 |
+| settings.py | /api/settings | 설정 |
+| skills.py | /api/skills | 스킬 |
+| digest.py | /api/projects | 다이제스트 |
+| google.py | /api/google | Google 커넥터 |
+| mcp.py | /mcp | MCP 엔드포인트 |
 
 ## SSE 패턴 (tasks)
 

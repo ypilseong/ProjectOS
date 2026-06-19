@@ -399,6 +399,68 @@ def test_run_simulation_returns_task_id_when_graph_and_chunks_exist(client):
     assert "task_id" in r2.json()
 
 
+@pytest.mark.asyncio
+async def test_run_simulation_archives_result_by_run_id(monkeypatch):
+    import json as _json
+    from pathlib import Path
+
+    from app.api.projects import _run_simulation
+    from app.config import config as _cfg
+    from app.services.project_store import project_store
+
+    project = project_store.create(name="Simulation Archive", description="")
+    proj_dir = Path(_cfg.PROJECTS_DIR) / project.project_id
+    graph_data = {
+        "directed": True,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [{"type": "Person", "name": "Yang", "id": "Person:Yang"}],
+        "links": [],
+    }
+    chunks_data = [
+        {
+            "chunk_id": "c1",
+            "text": "Yang built ProjectOS.",
+            "source_file": "cv.pdf",
+            "file_type": "cv",
+            "page_num": None,
+            "char_offset": 0,
+        }
+    ]
+    (proj_dir / "graph.json").write_text(_json.dumps(graph_data), encoding="utf-8")
+    (proj_dir / "chunks.json").write_text(_json.dumps(chunks_data), encoding="utf-8")
+
+    async def fake_run(self, graph, chunks, query="", cv_text="", apply_graph=True, project_id="", run_id=None):
+        return {
+            "schema_version": "2.0",
+            "project_id": project_id,
+            "run_id": "sim_archive_test",
+            "query": query,
+            "status": "completed",
+            "summary": {"title": "Archived"},
+            "graph_delta": {"nodes": [], "edges": []},
+            "report_sections": [],
+            "event_log": [],
+            "applied_graph_changes": {"nodes_added": 0, "edges_added": 0},
+        }
+
+    monkeypatch.setattr("app.agents.simulation_agent.ProjectSimulationAgent.run", fake_run)
+
+    await _run_simulation(
+        "missing-task-ok",
+        project.project_id,
+        query="Improve CV",
+        cv_text="",
+        apply_graph=False,
+        update_vault=False,
+    )
+
+    latest = _json.loads((proj_dir / "simulation.json").read_text(encoding="utf-8"))
+    archived = _json.loads((proj_dir / "simulations" / "sim_archive_test.json").read_text(encoding="utf-8"))
+    assert latest["run_id"] == "sim_archive_test"
+    assert archived == latest
+
+
 def test_reconcile_endpoint_dry_run_returns_patch(client, tmp_path, monkeypatch):
     import json
     import networkx as nx
@@ -433,3 +495,72 @@ def test_reconcile_endpoint_missing_graph_returns_400(client, tmp_path, monkeypa
     monkeypatch.setattr(config, "VAULT_DIR", str(tmp_path / "vault"))
     resp = client.post("/api/projects/nope/reconcile")
     assert resp.status_code == 400
+
+
+def test_resolve_simulation_evidence_endpoint(client):
+    import networkx as nx
+
+    from app.config import config as _cfg
+
+    create_r = client.post("/api/projects", json={"name": "Sim Evidence"})
+    pid = create_r.json()["project_id"]
+    proj_dir = Path(_cfg.PROJECTS_DIR) / pid
+
+    (proj_dir / "chunks.json").write_text(
+        json.dumps([
+            {
+                "chunk_id": "c1",
+                "text": "Yang uses Python daily.",
+                "source_file": "cv.pdf",
+                "file_type": "cv",
+                "page_num": 2,
+                "char_offset": 0,
+            }
+        ]),
+        encoding="utf-8",
+    )
+    graph = nx.DiGraph()
+    graph.add_node(
+        "Skill:Python",
+        type="Skill",
+        name="Python",
+        evidence=[{
+            "source_file": "cv.pdf",
+            "chunk_id": "c1",
+            "page_num": 2,
+            "char_offset": 0,
+            "quote": "uses Python",
+            "confidence": 0.9,
+            "method": "llm_extraction",
+            "directness": "direct",
+        }],
+    )
+    (proj_dir / "graph.json").write_text(json.dumps(nx.node_link_data(graph)), encoding="utf-8")
+    (proj_dir / "simulation.json").write_text(
+        json.dumps({"schema_version": "2.0", "run_id": "sim_1"}),
+        encoding="utf-8",
+    )
+
+    resp = client.post(
+        f"/api/projects/{pid}/simulation/evidence",
+        json={"evidence_refs": ["chunk:cv.pdf#c1", "node:Skill:Python", "chunk:nope#missing"]},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["kind"] == "simulation_evidence"
+    assert payload["refs"][0]["text"] == "Yang uses Python daily."
+    assert payload["refs"][1]["evidence"][0]["directness"] == "direct"
+    assert payload["unresolved_refs"] == ["chunk:nope#missing"]
+
+
+def test_resolve_simulation_evidence_endpoint_404_when_not_run(client):
+    create_r = client.post("/api/projects", json={"name": "No Sim"})
+    pid = create_r.json()["project_id"]
+
+    resp = client.post(
+        f"/api/projects/{pid}/simulation/evidence",
+        json={"evidence_refs": ["chunk:cv.pdf#c1"]},
+    )
+
+    assert resp.status_code == 404

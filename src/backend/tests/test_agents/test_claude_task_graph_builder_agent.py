@@ -62,3 +62,43 @@ async def test_claude_task_graph_builder_extracts_graph_from_runner(tmp_path):
     task_input = runner.run_task.call_args.args[2]
     assert task_input["source_files"] == [str(source.resolve())]
     assert task_input["allowed_entity_types"] == ["Person", "Project", "Skill"]
+
+
+@pytest.mark.asyncio
+async def test_claude_task_graph_builder_skips_paper_author_without_existing_person(tmp_path):
+    from app.agents.claude_task_graph_builder_agent import ClaudeTaskGraphBuilderAgent
+
+    runner = AsyncMock()
+    runner.run_task = AsyncMock(return_value={
+        "entities": [
+            {"type": "Person", "name": "Jane Doe", "description": "paper author"},
+            {"type": "Publication", "name": "Example Paper", "description": "paper"},
+        ],
+        "relations": [
+            {
+                "source": "Jane Doe",
+                "source_type": "Person",
+                "target": "Example Paper",
+                "target_type": "Publication",
+                "relation": "AUTHORED",
+            },
+        ],
+    })
+    ontology = Ontology(
+        entity_types=[
+            EntityTypeDef("Person", ""),
+            EntityTypeDef("Publication", ""),
+        ],
+        edge_types=[EdgeTypeDef("AUTHORED", "")],
+        analysis_summary="",
+    )
+    chunks = [TextChunk("c1", "Jane Doe wrote Example Paper", "paper.pdf", "paper", None, 0)]
+    source = tmp_path / "paper.pdf"
+    source.write_text("Jane Doe wrote Example Paper", encoding="utf-8")
+
+    agent = ClaudeTaskGraphBuilderAgent(runner=runner)
+    graph = await agent.run(chunks, ontology, file_paths=[source])
+
+    assert "Person:Jane Doe" not in graph
+    assert "Publication:Example Paper" in graph
+    assert graph.number_of_edges() == 0

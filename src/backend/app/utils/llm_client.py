@@ -296,6 +296,12 @@ class LLMClient:
 
         return cls(backend=route(role), disable_plugins=disable_plugins)
 
+    @property
+    def model_name(self) -> str:
+        if isinstance(self._impl, _ClaudeCodeBackend):
+            return config.CLAUDE_CODE_MODEL
+        return config.LLM_MODEL
+
     async def chat(self, messages: list[dict], **kwargs) -> str:
         return await self._impl.chat(messages, **kwargs)
 

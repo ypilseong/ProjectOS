@@ -349,6 +349,30 @@ async def get_simulation(project_id: str):
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+@router.post("/{project_id}/simulation/evidence")
+async def resolve_simulation_evidence_endpoint(project_id: str, body: dict):
+    """Resolve selected simulation evidence refs to quote/source/page/anchor detail."""
+    from app.services.simulation_context import (
+        load_simulation_result,
+        resolve_simulation_evidence,
+    )
+
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    try:
+        simulation = load_simulation_result(project_id, str(body.get("run_id") or "") or None)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    refs = [str(ref) for ref in body.get("evidence_refs", [])]
+    return resolve_simulation_evidence(
+        project_id,
+        simulation,
+        refs,
+        max_chars_per_ref=int(body.get("max_chars_per_ref", 1200)),
+    )
+
+
 def _build_tree(path: Path) -> list:
     result = []
     try:
@@ -617,6 +641,7 @@ async def _run_simulation(
         graph = nx.node_link_graph(graph_data)
         chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
+        source_file_types = {chunk.source_file: chunk.file_type for chunk in chunks}
 
         task_manager.update(
             task_id,
@@ -643,8 +668,22 @@ async def _run_simulation(
             json.dumps(result, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        if result.get("run_id"):
+            archive_dir = proj_dir / "simulations"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            (archive_dir / f"{result['run_id']}.json").write_text(
+                json.dumps(result, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
 
         if apply_graph:
+            from app.utils.graph_restructure import cleanup_paper_author_person_nodes
+            graph, removed_paper_authors = cleanup_paper_author_person_nodes(graph, source_file_types)
+            if removed_paper_authors:
+                from app.utils.logger import get_logger
+                get_logger(__name__).info(
+                    f"Simulation graph cleanup: removed {removed_paper_authors} paper author node(s)"
+                )
             graph_path = proj_dir / "graph.json"
             graph_path.write_text(
                 json.dumps(json_graph.node_link_data(graph), indent=2, ensure_ascii=False),

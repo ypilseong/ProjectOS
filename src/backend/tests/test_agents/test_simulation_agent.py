@@ -4,11 +4,26 @@ import pytest
 from app.agents.simulation_agent import (
     EnvironmentSpec,
     PersonaAgentSpec,
+    PersonaSimulationAgent,
     ProjectSimulationAgent,
     apply_graph_enhancements,
+    build_simulation_context,
     fallback_simulation_result,
 )
 from app.models.graph import TextChunk
+
+
+def _graph_with_category_hub() -> nx.DiGraph:
+    """Graph where a Category hub has the highest degree but real entities are few."""
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    graph.add_node("Category:Skills", type="Category", name="Skills")
+    graph.add_edge("Person:Yang", "Category:Skills", relation="HAS")
+    for i in range(6):
+        sid = f"Skill:S{i}"
+        graph.add_node(sid, type="Skill", name=f"S{i}", description=f"skill {i}")
+        graph.add_edge("Category:Skills", sid, relation="INCLUDES")
+    return graph
 
 
 def test_apply_graph_enhancements_adds_nodes_and_edges():
@@ -43,6 +58,44 @@ def test_apply_graph_enhancements_adds_nodes_and_edges():
     assert "Skill:Python" in graph
     assert graph.has_edge("Person:Yang", "Skill:Python")
     assert graph.edges["Person:Yang", "Skill:Python"]["relation"] == "USES_SKILL"
+
+
+def test_apply_graph_enhancements_attaches_simulation_evidence_anchor():
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+
+    apply_graph_enhancements(
+        graph,
+        {
+            "nodes": [
+                {"type": "Skill", "name": "Python", "evidence": "cv.pdf says Python"}
+            ],
+            "edges": [
+                {
+                    "source_type": "Person",
+                    "source_name": "Yang",
+                    "target_type": "Skill",
+                    "target_name": "Python",
+                    "relation": "USES_SKILL",
+                    "evidence": "Yang uses Python",
+                    "confidence": 0.7,
+                }
+            ],
+        },
+    )
+
+    node_evidence = graph.nodes["Skill:Python"]["evidence"]
+    assert isinstance(node_evidence, list)
+    assert node_evidence[0]["method"] == "simulation"
+    assert node_evidence[0]["directness"] == "inferred"
+    assert node_evidence[0]["quote"] == "cv.pdf says Python"
+
+    edge_evidence = graph.edges["Person:Yang", "Skill:Python"]["evidence"]
+    assert isinstance(edge_evidence, dict)
+    assert edge_evidence["method"] == "simulation"
+    assert edge_evidence["directness"] == "inferred"
+    assert edge_evidence["quote"] == "Yang uses Python"
+    assert edge_evidence["confidence"] == 0.7
 
 
 @pytest.mark.asyncio
@@ -176,6 +229,168 @@ async def test_project_simulation_agent_marks_deltas_proposed_without_apply():
     assert "Skill:Python" not in graph
 
 
+@pytest.mark.asyncio
+async def test_project_simulation_agent_runs_multi_turn_persona_debate():
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    chunks = [TextChunk("c1", "Yang built ProjectOS.", "cv.pdf", "cv", None, 0)]
+    personas = [
+        PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective"),
+        PersonaAgentSpec(agent_id="agent_2", name="Reviewer", role="Evidence reviewer"),
+    ]
+    environment = EnvironmentSpec(objective="Improve CV", rounds=2)
+
+    class FakePersonaAgent:
+        async def run(self, graph, chunks, query="", max_agents=8):
+            return personas
+
+    class FakeEnvironmentAgent:
+        async def run(self, graph, chunks, personas, query=""):
+            return environment
+
+    class FakeLlm:
+        def __init__(self):
+            self.turn_prompts = []
+            self.synthesis_prompts = []
+
+        async def chat_json(self, messages):
+            prompt = messages[-1]["content"]
+            if "다음 ProjectOS 페르소나 debate 로그를 종합" in prompt:
+                self.synthesis_prompts.append(prompt)
+                return {
+                    "graph_enhancements": {"nodes": [], "edges": []},
+                    "cv_improvements": {"summary": "Keep source-backed claims."},
+                    "report": {"title": "Simulation Report", "answer": "ok"},
+                }
+
+            self.turn_prompts.append(prompt)
+            return {
+                "observation": f"observation {len(self.turn_prompts)}",
+                "proposal": f"proposal {len(self.turn_prompts)}",
+                "evidence_refs": ["Person:Yang"],
+                "responds_to": "turn_001" if len(self.turn_prompts) > 1 else "",
+                "unresolved_questions": ["Need stronger evidence"],
+            }
+
+    fake_llm = FakeLlm()
+    agent = ProjectSimulationAgent(
+        persona_agent=FakePersonaAgent(),
+        environment_agent=FakeEnvironmentAgent(),
+        llm=fake_llm,
+    )
+
+    result = await agent.run(graph, chunks, query="Improve CV", apply_graph=False)
+
+    assert len(fake_llm.turn_prompts) == 4
+    assert len(fake_llm.synthesis_prompts) == 1
+    assert [turn["round"] for turn in result["timeline"]] == [1, 1, 2, 2]
+    assert [turn["speaker_id"] for turn in result["debate"]["turns"]] == [
+        "agent_1",
+        "agent_2",
+        "agent_1",
+        "agent_2",
+    ]
+    assert result["debate"]["turns"][1]["responds_to"] == "turn_001"
+    assert "turn_001" in fake_llm.turn_prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_simulation_lineage_multi_turn_debate():
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    chunks = [TextChunk("c1", "Yang built ProjectOS.", "cv.pdf", "cv", None, 0)]
+    personas = [
+        PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective"),
+        PersonaAgentSpec(agent_id="agent_2", name="Reviewer", role="Evidence reviewer"),
+    ]
+    environment = EnvironmentSpec(objective="Improve CV", rounds=2)
+
+    class FakePersonaAgent:
+        async def run(self, graph, chunks, query="", max_agents=8):
+            return personas
+
+    class FakeEnvironmentAgent:
+        async def run(self, graph, chunks, personas, query=""):
+            return environment
+
+    class FakeLlm:
+        model_name = "local-test-model"
+
+        async def chat_json(self, messages):
+            prompt = messages[-1]["content"]
+            if "다음 ProjectOS 페르소나 debate 로그를 종합" in prompt:
+                return {
+                    "graph_enhancements": {"nodes": [], "edges": []},
+                    "report": {"title": "Simulation Report", "answer": "ok"},
+                }
+            return {"observation": "obs", "proposal": "prop"}
+
+    agent = ProjectSimulationAgent(
+        persona_agent=FakePersonaAgent(),
+        environment_agent=FakeEnvironmentAgent(),
+        llm=FakeLlm(),
+    )
+
+    result = await agent.run(graph, chunks, query="Improve CV", apply_graph=False)
+
+    lineage = result["lineage"]
+    assert lineage["engine"] == "multi_turn_debate"
+    assert lineage["engine_version"]
+    assert lineage["turn_calls"] == 4
+    assert lineage["fallback_turns"] == 0
+    assert lineage["total_turns"] == 4
+    assert lineage["turns_with_previous_context"] == 3
+    assert lineage["synthesis_model"] == "local-test-model"
+    assert lineage["synthesis_completed_at"]
+
+    turns = result["debate"]["turns"]
+    assert turns[0]["had_previous_context"] is False
+    assert turns[1]["had_previous_context"] is True
+    assert all(turn["is_fallback"] is False for turn in turns)
+
+
+@pytest.mark.asyncio
+async def test_simulation_lineage_fallback_engine():
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    chunks = [TextChunk("c1", "Yang built ProjectOS.", "cv.pdf", "cv", None, 0)]
+    personas = [
+        PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective"),
+        PersonaAgentSpec(agent_id="agent_2", name="Reviewer", role="Evidence reviewer"),
+    ]
+    environment = EnvironmentSpec(objective="Improve CV", rounds=2)
+
+    class FakePersonaAgent:
+        async def run(self, graph, chunks, query="", max_agents=8):
+            return personas
+
+    class FakeEnvironmentAgent:
+        async def run(self, graph, chunks, personas, query=""):
+            return environment
+
+    class FakeLlm:
+        model_name = "local-test-model"
+
+        async def chat_json(self, messages):
+            raise RuntimeError("llm down")
+
+    agent = ProjectSimulationAgent(
+        persona_agent=FakePersonaAgent(),
+        environment_agent=FakeEnvironmentAgent(),
+        llm=FakeLlm(),
+    )
+
+    result = await agent.run(graph, chunks, query="Improve CV", apply_graph=False)
+
+    lineage = result["lineage"]
+    assert lineage["engine"] == "fallback"
+    assert lineage["turn_calls"] == 0
+    assert lineage["fallback_turns"] == 4
+    assert lineage["total_turns"] == 4
+    assert lineage["synthesis_model"] == ""
+    assert lineage["synthesis_completed_at"] == ""
+
+
 def test_fallback_simulation_result_uses_cv_chunks_and_query():
     graph = nx.DiGraph()
     graph.add_node("Person:Yang", type="Person", name="Yang")
@@ -205,6 +420,40 @@ def test_fallback_simulation_result_uses_cv_chunks_and_query():
     assert result["report"]["answer"] == "What should be improved?"
     assert "Built ProjectOS" in result["cv_improvements"]["improved_draft"]
     assert result["timeline"][0]["agent_id"] == "agent_1"
+
+
+def test_build_simulation_context_excludes_meta_hubs():
+    context = build_simulation_context(_graph_with_category_hub(), [], "")
+
+    summary, _, rest = context.partition("## Important Nodes")
+    important, _, edges = rest.partition("## Edges")
+
+    # Category hub dominates degree but must not appear in analytical surfaces.
+    assert "Category:Skills" not in important
+    assert "Category" not in summary
+    assert "Skills" not in edges
+    # Real entities are still present.
+    assert "Skill:S0" in important
+
+
+def test_fallback_simulation_result_excludes_meta_hubs():
+    graph = _graph_with_category_hub()
+    personas = [PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective")]
+    environment = EnvironmentSpec(objective="Improve CV")
+
+    result = fallback_simulation_result(graph, [], personas, environment, "q")
+
+    evidence = " ".join(result["report"].get("evidence", []))
+    assert "Skills" not in evidence
+
+
+def test_fallback_personas_excludes_meta_hubs():
+    agent = PersonaSimulationAgent()
+    personas = agent._fallback_personas(_graph_with_category_hub(), max_agents=3)
+
+    source_nodes = {n for p in personas for n in p.source_nodes}
+    assert "Category:Skills" not in source_nodes
+    assert all(p.name != "Skills" for p in personas)
 
 
 def test_simulation_agents_force_local_llm(monkeypatch):

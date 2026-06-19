@@ -264,6 +264,19 @@ class ObsidianWriterAgent:
                     lines.append(f"- {item}")
                 lines.append("")
 
+        paper_authors = data.get("paper_authors", [])
+        if ntype == "Publication" and paper_authors:
+            lines.append("## Paper Authors")
+            lines.append("")
+            for author in paper_authors:
+                if isinstance(author, dict):
+                    name = author.get("name", "")
+                else:
+                    name = str(author)
+                if name:
+                    lines.append(f"- {name}")
+            lines.append("")
+
         lines += [
             "## Sources",
             f"- {', '.join(sources) if sources else '(none)'}",

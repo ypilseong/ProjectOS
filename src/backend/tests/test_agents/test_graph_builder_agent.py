@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from unittest.mock import AsyncMock, patch
 import networkx as nx
@@ -47,6 +49,27 @@ async def test_graph_builder_creates_nodes(sample_ontology):
     assert "Person:Yang Pilseong" in graph.nodes
     assert "Skill:Python" in graph.nodes
     assert graph.number_of_edges() >= 1
+
+
+@pytest.mark.asyncio
+async def test_chunk_failure_logs_exception_type_when_message_empty(
+    sample_ontology, caplog
+):
+    import logging
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "test", "the report.pdf", "report", 1, 0)]
+
+    with patch.object(
+        agent, "_extract_from_chunk", new=AsyncMock(side_effect=TimeoutError())
+    ):
+        with caplog.at_level(logging.ERROR):
+            await agent.run(chunks, sample_ontology)
+
+    failure_logs = [r for r in caplog.records if "failed" in r.getMessage()]
+    assert failure_logs, "expected a failure log record"
+    assert "TimeoutError" in failure_logs[0].getMessage()
 
 
 @pytest.mark.asyncio
@@ -100,6 +123,99 @@ async def test_graph_builder_filters_generic_person_entities(sample_ontology):
     assert "Person:저" not in graph.nodes
     assert "Person:Author" not in graph.nodes
     assert "Skill:Python" in graph.nodes
+
+
+@pytest.mark.asyncio
+async def test_graph_builder_skips_paper_author_without_existing_person():
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    ontology = Ontology(
+        entity_types=[
+            EntityTypeDef("Person", "사람", []),
+            EntityTypeDef("Publication", "논문", []),
+        ],
+        edge_types=[EdgeTypeDef("AUTHORED", "저술", ["Person"], ["Publication"])],
+        analysis_summary="test",
+    )
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "Jane Doe wrote Example Paper.", "paper.pdf", "paper", 1, 0)]
+    extract = {
+        "entities": [
+            {"type": "Person", "name": "Jane Doe", "description": "paper author"},
+            {"type": "Publication", "name": "Example Paper", "description": "paper"},
+        ],
+        "relations": [
+            {
+                "source": "Jane Doe",
+                "source_type": "Person",
+                "target": "Example Paper",
+                "target_type": "Publication",
+                "relation": "AUTHORED",
+            }
+        ],
+    }
+
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=extract)):
+        graph = await agent.run(chunks, ontology)
+
+    assert "Person:Jane Doe" not in graph.nodes
+    assert "Publication:Example Paper" in graph.nodes
+    assert graph.number_of_edges() == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_builder_links_paper_author_to_existing_person(tmp_path):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    ontology = Ontology(
+        entity_types=[
+            EntityTypeDef("Person", "사람", []),
+            EntityTypeDef("Publication", "논문", []),
+        ],
+        edge_types=[EdgeTypeDef("AUTHORED", "저술", ["Person"], ["Publication"])],
+        analysis_summary="test",
+    )
+    graph_path = tmp_path / "graph.json"
+    existing = nx.DiGraph()
+    existing.add_node(
+        "Person:Jane Doe",
+        type="Person",
+        name="Jane Doe",
+        description="existing collaborator",
+        source_files=["cv.pdf"],
+        source_chunk_ids=["cv1"],
+        attributes={},
+    )
+    data = nx.node_link_data(existing)
+    if "edges" in data and "links" not in data:
+        data["links"] = data.pop("edges")
+    graph_path.write_text(json.dumps(data), encoding="utf-8")
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "Jane Doe wrote Example Paper.", "paper.pdf", "publication", 1, 0)]
+    extract = {
+        "entities": [
+            {"type": "Person", "name": "Jane Doe", "description": "paper author"},
+            {"type": "Publication", "name": "Example Paper", "description": "paper"},
+        ],
+        "relations": [
+            {
+                "source": "Jane Doe",
+                "source_type": "Person",
+                "target": "Example Paper",
+                "target_type": "Publication",
+                "relation": "AUTHORED",
+                "confidence": 0.9,
+            }
+        ],
+    }
+
+    with patch.object(agent._llm, "chat_json", new=AsyncMock(return_value=extract)):
+        graph = await agent.run(chunks, ontology, incremental=True, graph_path=str(graph_path))
+
+    assert "Person:Jane Doe" in graph.nodes
+    assert "paper.pdf" in graph.nodes["Person:Jane Doe"]["source_files"]
+    assert graph.has_edge("Person:Jane Doe", "Publication:Example Paper")
 
 
 @pytest.mark.asyncio
@@ -434,6 +550,90 @@ def test_graph_stats():
     assert stats.total_edges == 1
     assert stats.nodes_by_type["Person"] == 1
     assert stats.edges_by_type["USES_SKILL"] == 1
+
+
+MOCK_EXTRACT_WITH_EVIDENCE = {
+    "entities": [
+        {"type": "Person", "name": "Yang Pilseong", "description": "ML 연구자"},
+        {"type": "Skill", "name": "Python", "description": "프로그래밍 언어"},
+    ],
+    "relations": [
+        {
+            "source": "Yang Pilseong",
+            "source_type": "Person",
+            "target": "Python",
+            "target_type": "Skill",
+            "relation": "USES_SKILL",
+            "confidence": 0.95,
+            "quote": "Yang Pilseong은 Python 전문가",
+            "directness": "direct",
+        }
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_edge_carries_evidence_anchor(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "Yang Pilseong은 Python 전문가", "cv.pdf", "cv", 7, 42)]
+
+    with patch.object(
+        agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_EXTRACT_WITH_EVIDENCE)
+    ):
+        graph = await agent.run(chunks, sample_ontology)
+
+    ev = list(graph.edges(data=True))[0][2]["evidence"]
+    assert ev["source_file"] == "cv.pdf"
+    assert ev["chunk_id"] == "id1"
+    assert ev["page_num"] == 7
+    assert ev["char_offset"] == 42
+    assert ev["quote"] == "Yang Pilseong은 Python 전문가"
+    assert ev["confidence"] == 0.95
+    assert ev["directness"] == "direct"
+    assert ev["method"] == "llm_extraction"
+
+
+@pytest.mark.asyncio
+async def test_node_carries_evidence_anchor(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    chunks = [TextChunk("id1", "Yang Pilseong은 Python 전문가", "cv.pdf", "cv", 7, 42)]
+
+    with patch.object(
+        agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_EXTRACT_WITH_EVIDENCE)
+    ):
+        graph = await agent.run(chunks, sample_ontology)
+
+    anchors = graph.nodes["Skill:Python"]["evidence"]
+    assert isinstance(anchors, list)
+    assert anchors[0]["source_file"] == "cv.pdf"
+    assert anchors[0]["chunk_id"] == "id1"
+    assert anchors[0]["page_num"] == 7
+
+
+@pytest.mark.asyncio
+async def test_reextract_marks_evidence_inferred(sample_ontology):
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+
+    agent = GraphBuilderAgent()
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang Pilseong", type="Person", name="Yang Pilseong")
+    graph.add_node("Skill:Python", type="Skill", name="Python")
+
+    with patch.object(
+        agent._llm, "chat_json", new=AsyncMock(return_value=MOCK_EXTRACT_WITH_EVIDENCE)
+    ):
+        added = await agent.reextract_with_context(
+            "combined context", "cv.pdf", graph, ["Person", "Skill"], ["USES_SKILL"]
+        )
+
+    assert added == 1
+    ev = graph["Person:Yang Pilseong"]["Skill:Python"]["evidence"]
+    assert ev["directness"] == "inferred"
+    assert ev["method"] == "reextract_context"
 
 
 def test_save_and_load_graph(tmp_path):

@@ -27,9 +27,7 @@ This keeps routine Claude Desktop context small while preserving access to riche
 
 ## Simulation Guidance
 
-Claude Desktop should not load the entire simulation payload by default after `projectos_run_simulation`. Because the current `projectos_get_simulation` tool may return a large report, use it only for short confirmation or when the user explicitly asks to inspect simulation output.
-
-Future documentation should shift the default simulation workflow to delta or report-section tools once those MCP tools exist.
+Claude Desktop should not load the entire simulation payload by default after `projectos_run_simulation`. Use `projectos_get_simulation_summary` first, then request only the needed graph delta, report section, event log, or evidence refs. Keep `projectos_get_simulation` for explicit full export, debugging, or user-requested inspection.
 
 ## Non-Goals
 

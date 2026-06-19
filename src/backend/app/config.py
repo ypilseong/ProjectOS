@@ -17,13 +17,13 @@ class Config(BaseSettings):
     GOOGLE_SYNC_POLL_SECONDS: int = 3600
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = "http://127.0.0.1:8002/api/google/oauth/callback"
+    GOOGLE_REDIRECT_URI: str = "http://127.0.0.1:14006/api/google/oauth/callback"
     GOOGLE_TOKEN_PATH: str = "./google_token.json"
     GOOGLE_STATE_PATH: str = "./google_sync_state.json"
     GOOGLE_GMAIL_QUERY: str = "newer_than:30d"
     GOOGLE_DRIVE_QUERY: str = "trashed = false"
     GOOGLE_SYNC_MAX_RESULTS: int = 20
-    BACKEND_PUBLIC_URL: str = "http://127.0.0.1:8002"
+    BACKEND_PUBLIC_URL: str = "http://127.0.0.1:14006"
     CLAUDE_CODE_MODEL: str = ""
     CLAUDE_TASKS_DIR: str = "/tmp/projectos-claude-tasks"
     CLAUDE_TASK_BARE: bool = False
@@ -55,6 +55,8 @@ class Config(BaseSettings):
     EMBEDDING_BASE_URL: str = ""
     EMBEDDING_MODEL: str = "BAAI/bge-m3"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.88
+    MERGE_REVIEW_THRESHOLD: float = 0.80
+    ISOLATED_REEXTRACT_ENABLED: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
