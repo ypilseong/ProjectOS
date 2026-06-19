@@ -84,7 +84,8 @@ This is the compact handoff. The previous file had grown into a long chronologic
   - `cd src/frontend && npm run build` → success (chunk-size advisory only)
   - `cd src/obsidian-plugin && npm run build` → success (exit 0, `main.js` regenerated)
   - `.gitignore` gained `src/backend/projects/**/*.npy` so runtime embedding artifacts (`embeddings/*.npy`) are no longer exposed as untracked; `projects/` now has zero non-ignored untracked files.
-  - The update set was then committed along directory boundaries (gitignore / backend+docs / frontend / obsidian-plugin / handoff). Not yet pushed.
+  - The update set was then committed along directory boundaries (gitignore / backend+docs / frontend / obsidian-plugin / handoff) and pushed.
+  - The branch was renamed `hybrid-retrieval` -> `graph-simulation-quality` (local + remote; old remote branch deleted) because the hybrid-retrieval feature itself is already merged to `main` and the name was stale.
 - Runtime inbox graph build on project `21fc2ce5`:
   - Ingested 7 real inbox documents; skipped `.DS_Store` and Syncthing metadata.
   - Parse completed with 34 chunks; ontology completed with 9 entity types.
@@ -132,7 +133,7 @@ This is the compact handoff. The previous file had grown into a long chronologic
 
 ## Known Gaps
 
-- The 06-10/06-11 update set is now committed (2026-06-19) along directory boundaries on branch `hybrid-retrieval`, but not pushed. Note: the `hybrid-retrieval` branch name is stale — the hybrid-retrieval feature itself is already merged to `main`; this branch now carries the later simulation/clip/MCP-quality work on top of `main`.
+- The 06-10/06-11 update set is committed (2026-06-19) along directory boundaries and pushed. The branch was renamed `hybrid-retrieval` -> `graph-simulation-quality`; it contains all of `main` plus the simulation/clip/MCP-quality work and can fast-forward `main`.
 - `docs/claude-desktop-mcp.md` and the MCP exposed tool list should be rechecked together before commit, because hidden-vs-exposed tool behavior is intentional.
 - Frontend browser behavior is build-tested but not visually verified in this environment.
 - Simulation debate turn evidence refs are not yet rendered through the shared evidence panel.
