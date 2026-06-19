@@ -270,6 +270,30 @@
   margin: 4px 0 8px;
 }
 
+.pos-project-summary,
+.pos-sync-target {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  font-size: 12px;
+}
+
+.pos-project-summary span,
+.pos-sync-target span {
+  color: var(--text-muted);
+}
+
+.pos-project-summary strong,
+.pos-project-summary code,
+.pos-sync-target code {
+  overflow-wrap: anywhere;
+}
+
 .pos-btn {
   padding: 6px 12px;
   border-radius: 6px;
