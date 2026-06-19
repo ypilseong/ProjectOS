@@ -6,6 +6,7 @@ from pathlib import Path
 
 import networkx as nx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 
 from app.config import config
@@ -17,6 +18,10 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+class MergeCandidateAction(BaseModel):
+    keep_id: str
+    candidate_id: str
 
 global_router = APIRouter()
 
@@ -235,6 +240,39 @@ async def cleanup_graph(project_id: str):
         project_id=project_id,
     )
     return {"removed_person_nodes": removed, "stats": dataclasses.asdict(stats)}
+
+
+@router.post("/{project_id}/graph/merge-candidates/apply")
+async def apply_merge_candidate(project_id: str, body: MergeCandidateAction):
+    from app.utils.merge_denylist import load_denylist
+    from app.utils.merge_review import collect_merge_candidates
+    from app.utils.semantic_dedup import _merge_node
+
+    p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    if not p.exists():
+        raise HTTPException(404, "Graph not built yet")
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    if body.keep_id not in graph or body.candidate_id not in graph:
+        raise HTTPException(409, "Candidate is stale; node no longer exists")
+
+    _merge_node(graph, body.keep_id, body.candidate_id)
+
+    merge_candidates = collect_merge_candidates(
+        graph, denylist=load_denylist(project_id)
+    )
+    graph.graph["merge_candidates"] = merge_candidates
+
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    p.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {"merged": True, "merge_candidates": merge_candidates}
 
 
 @router.get("/{project_id}/traces")
