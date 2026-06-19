@@ -224,6 +224,21 @@
                 @graph-updated="onSimulationGraphUpdated"
               />
             </el-tab-pane>
+            <el-tab-pane name="merge">
+              <template #label>
+                병합 검토
+                <el-badge
+                  v-if="mergeCandidateCount > 0"
+                  :value="mergeCandidateCount"
+                  class="merge-badge"
+                />
+              </template>
+              <MergeReviewPanel
+                :project-id="projectId"
+                :graph-data="graphData"
+                @merged="onMergeApplied"
+              />
+            </el-tab-pane>
           </el-tabs>
           <div class="step-nav">
             <el-button @click="activeStep = 2" plain>← 이전</el-button>
@@ -264,6 +279,8 @@ import StatsPanel from '../components/StatsPanel.vue'
 import GraphView from '../components/GraphView.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import SimulationPanel from '../components/SimulationPanel.vue'
+import MergeReviewPanel from '../components/MergeReviewPanel.vue'
+import { extractMergeCandidates } from '../lib/mergeCandidates.js'
 import VaultTree from '../components/VaultTree.vue'
 import AnalysisDrawer from '../components/AnalysisDrawer.vue'
 import { projectsApi } from '../api/client.js'
@@ -285,6 +302,7 @@ const profileTask = ref(null)
 const profileRunning = ref(false)
 const vaultTree = ref([])
 const resultTab = ref('graph')
+const mergeCandidateCount = computed(() => extractMergeCandidates(graphData.value).length)
 const analysisData = ref(null)
 const analysisTask = ref(null)
 const analysisRunning = ref(false)
@@ -433,6 +451,16 @@ async function onSimulationGraphUpdated(nextGraph) {
   await loadSidebarData()
 }
 
+async function onMergeApplied() {
+  try {
+    const r = await projectsApi.getGraph(projectId.value)
+    graphData.value = r.data
+    await loadSidebarData()
+  } catch (e) {
+    console.error('Failed to refresh graph after merge:', e)
+  }
+}
+
 function goToUpload() {
   activeStep.value = 0
 }
@@ -533,4 +561,5 @@ function onProfileFailed(err) {
 .step-nav { display: flex; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #f0f0f0; }
 .mt-3 { margin-top: 16px; }
 .ml-2 { margin-left: 8px; }
+.merge-badge { margin-left: 6px; }
 </style>
