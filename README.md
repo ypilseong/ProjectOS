@@ -1,12 +1,22 @@
 # ProjectOS
 
-ProjectOS turns personal project files, resumes, and notes into a visual career knowledge graph. The backend parses uploaded documents, extracts typed entities and relations with an OpenAI-compatible LLM endpoint, writes project-specific logs, and exports an Obsidian-style vault. The frontend provides project management, graph visualization, progress tracking, and vault browsing.
+ProjectOS turns personal project files, resumes, and notes into a visual career knowledge graph. The backend parses uploaded documents, extracts typed entities and relations with an OpenAI-compatible LLM endpoint, writes project-specific logs, and exports an Obsidian-style vault. The frontend provides project management, ontology intent capture, graph visualization, merge review, progress tracking, and vault browsing.
 
 ## Stack
 
 - Backend: FastAPI, NetworkX, OpenAI-compatible LLM API, pytest
 - Frontend: Vue 3, Vite, Element Plus, D3
 - Outputs: graph JSON, project logs, Obsidian markdown vault
+
+## Features
+
+- Upload and parse project documents into reusable text chunks.
+- Review parsed file summaries before ontology generation.
+- Capture project intent for ontology and graph extraction, including the graph goal, priority focus, and interpretation policy.
+- Generate a fixed-type career/project ontology from uploaded materials.
+- Build an interactive knowledge graph with project-aware extraction prompts.
+- Review and apply semantic merge candidates before finalizing graph quality.
+- Export project memory into an Obsidian-compatible vault.
 
 ## Local Run
 
@@ -26,7 +36,7 @@ npm install
 npm run dev -- --host 0.0.0.0 --port 5174
 ```
 
-Open `http://localhost:5174`.
+Open `http://localhost:5174`, create or select a project, upload files, parse them, fill in the ontology intent questions, then generate the ontology and graph.
 
 ## Configuration
 
