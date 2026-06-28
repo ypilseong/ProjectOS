@@ -155,9 +155,60 @@
         <!-- Step 1: Ontology -->
         <div v-else-if="activeStep === 1" class="step-content">
           <h3 class="step-title">온톨로지 생성</h3>
-          <p class="step-desc">문서에서 엔티티와 관계 타입을 추출합니다.</p>
+          <p class="step-desc">문서 묶음을 확인한 뒤 목표에 맞춰 엔티티와 관계 타입을 정렬합니다.</p>
+          <div v-if="!ontology" class="ontology-context">
+            <el-skeleton v-if="ontologyContextLoading" :rows="4" animated />
+            <template v-else>
+              <div class="context-summary">
+                <div>
+                  <div class="context-label">파일 탐색 결과</div>
+                  <strong>{{ ontologyOverview.summary || '파싱된 파일이 없습니다.' }}</strong>
+                </div>
+                <el-button size="small" plain @click="loadOntologyContext">새로고침</el-button>
+              </div>
+              <div v-if="ontologyOverview.files?.length" class="context-files">
+                <div
+                  v-for="file in ontologyOverview.files"
+                  :key="file.source_file"
+                  class="context-file"
+                >
+                  <div class="context-file-title">
+                    <span>{{ file.source_file }}</span>
+                    <el-tag size="small">{{ file.file_type }}</el-tag>
+                  </div>
+                  <p>{{ file.preview || '미리보기 없음' }}</p>
+                </div>
+              </div>
+              <el-alert
+                v-else
+                type="warning"
+                show-icon
+                :closable="false"
+                title="먼저 파일 업로드와 파싱을 완료해야 합니다."
+              />
+              <el-form label-position="top" class="intent-form">
+                <el-form-item
+                  v-for="question in ontologyQuestions"
+                  :key="question.field"
+                  :label="question.question"
+                >
+                  <el-input
+                    v-model="ontologyIntentForm[question.field]"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    :placeholder="question.placeholder"
+                  />
+                </el-form-item>
+              </el-form>
+            </template>
+          </div>
           <div v-if="!ontology && !currentTaskId">
-            <el-button type="primary" :loading="running" @click="runOntology">
+            <el-button
+              type="primary"
+              :loading="running || ontologyContextSaving"
+              :disabled="!hasParsedFiles || !isOntologyIntentComplete"
+              @click="runOntology"
+            >
               온톨로지 생성 시작
             </el-button>
           </div>
@@ -307,8 +358,23 @@ const analysisData = ref(null)
 const analysisTask = ref(null)
 const analysisRunning = ref(false)
 const analysisDrawerVisible = ref(false)
+const ontologyContext = ref(null)
+const ontologyContextLoading = ref(false)
+const ontologyContextSaving = ref(false)
+const ontologyIntentForm = ref({
+  primary_goal: '',
+  priority_focus: '',
+  interpretation_policy: '',
+})
 
 const hasExistingGraph = computed(() => stats.value.total_nodes > 0)
+const ontologyOverview = computed(() => ontologyContext.value?.document_overview || {})
+const ontologyQuestions = computed(() => ontologyContext.value?.questions || [])
+const hasParsedFiles = computed(() => (ontologyOverview.value.total_chunks || 0) > 0)
+const isOntologyIntentComplete = computed(() =>
+  ['primary_goal', 'priority_focus', 'interpretation_policy']
+    .every(field => ontologyIntentForm.value[field]?.trim())
+)
 
 onMounted(async () => {
   try {
@@ -327,6 +393,7 @@ onMounted(async () => {
 
     await loadSidebarData()
     await loadAnalysis()
+    await loadOntologyContext()
     try {
       const pr = await projectsApi.getProfiles(projectId.value)
       profileData.value = pr.data
@@ -383,18 +450,55 @@ function onFilesUploaded(taskId) {
   currentTaskId.value = taskId
 }
 
-function onParseCompleted() {
+async function onParseCompleted() {
   currentTaskId.value = null
+  await loadOntologyContext()
   activeStep.value = 1
 }
 
 async function runOntology() {
+  if (!isOntologyIntentComplete.value) {
+    ElMessage.warning('온톨로지 생성 목표를 먼저 입력해 주세요.')
+    return
+  }
   running.value = true
   try {
+    await saveOntologyContext()
     const r = await projectsApi.runOntology(projectId.value)
     currentTaskId.value = r.data.task_id
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || '온톨로지 생성을 시작할 수 없습니다.')
   } finally {
     running.value = false
+  }
+}
+
+async function loadOntologyContext() {
+  ontologyContextLoading.value = true
+  try {
+    const r = await projectsApi.getOntologyContext(projectId.value)
+    ontologyContext.value = r.data
+    ontologyIntentForm.value = {
+      primary_goal: r.data.answers?.primary_goal || '',
+      priority_focus: r.data.answers?.priority_focus || '',
+      interpretation_policy: r.data.answers?.interpretation_policy || '',
+    }
+  } catch (e) {
+    ontologyContext.value = null
+  } finally {
+    ontologyContextLoading.value = false
+  }
+}
+
+async function saveOntologyContext() {
+  ontologyContextSaving.value = true
+  try {
+    const r = await projectsApi.saveOntologyContext(projectId.value, {
+      answers: ontologyIntentForm.value,
+    })
+    ontologyContext.value = r.data
+  } finally {
+    ontologyContextSaving.value = false
   }
 }
 
@@ -562,4 +666,21 @@ function onProfileFailed(err) {
 .mt-3 { margin-top: 16px; }
 .ml-2 { margin-left: 8px; }
 .merge-badge { margin-left: 6px; }
+.ontology-context { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+.context-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-top: 1px solid #ebeef5;
+  border-bottom: 1px solid #ebeef5;
+}
+.context-label { font-size: 12px; color: #909399; margin-bottom: 4px; }
+.context-files { display: grid; gap: 10px; }
+.context-file { border: 1px solid #ebeef5; border-radius: 6px; padding: 10px 12px; background: #fafafa; }
+.context-file-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: #303133; }
+.context-file-title span { min-width: 0; overflow-wrap: anywhere; }
+.context-file p { margin: 6px 0 0; color: #606266; font-size: 12px; line-height: 1.45; }
+.intent-form { margin-top: 4px; }
 </style>

@@ -121,6 +121,29 @@ async def get_ontology(project_id: str):
     return dataclasses.asdict(normalize_ontology_types(ontology))
 
 
+@router.get("/{project_id}/ontology/context")
+async def get_ontology_context(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    from app.services.ontology_context import build_context_payload
+
+    return build_context_payload(project)
+
+
+@router.post("/{project_id}/ontology/context")
+async def save_ontology_context(project_id: str, body: dict):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    from app.services.ontology_context import save_context
+
+    try:
+        return save_context(project, body.get("answers") or body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/{project_id}/graph")
 async def run_graph(project_id: str):
     project = project_store.get(project_id)
@@ -329,9 +352,14 @@ async def _run_ontology(task_id: str, project_id: str):
             raise ValueError("chunks.json not found — upload files first")
         chunks_data = json.loads(chunks_path.read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
+        project = project_store.get(project_id)
+        if not project:
+            raise ValueError("Project not found")
+        from app.services.ontology_context import build_prompt_context
+        ontology_context = build_prompt_context(project)
         agent = OntologyAgent()
         task_manager.update(task_id, progress=30, message="LLM 온톨로지 생성 중... (1/1)")
-        ontology = await agent.run(chunks)
+        ontology = await agent.run(chunks, project_context=ontology_context)
         out = Path(config.PROJECTS_DIR) / project_id / "ontology.json"
         out.write_text(
             json.dumps(dataclasses.asdict(ontology), indent=2, ensure_ascii=False),
@@ -418,9 +446,14 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 task_manager.update(task_id, message=f"증분 처리: {skipped}청크 스킵, {len(chunks)}청크 재처리", progress=25)
         # --- End hash tracking ---
 
+        project = project_store.get(project_id)
+        if not project:
+            raise ValueError("Project not found")
         graph_path = str(proj_dir / "graph.json")
         from app.services.capture_context import attach_capture_nodes, load_captures
         captures = load_captures(project_id)
+        from app.services.ontology_context import build_prompt_context
+        ontology_context = build_prompt_context(project)
         if config.GRAPH_BUILD_MODE == "claude_task":
             from app.agents.claude_task_graph_builder_agent import ClaudeTaskGraphBuilderAgent
             graph_agent = ClaudeTaskGraphBuilderAgent()
@@ -452,6 +485,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 ontology,
                 file_paths=file_paths,
                 progress_callback=on_chunk_progress,
+                project_context=ontology_context,
             )
         else:
             graph = await graph_agent.run(
@@ -461,6 +495,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 graph_path=graph_path,
                 progress_callback=on_chunk_progress,
                 capture_context=captures,
+                project_context=ontology_context,
             )
 
         task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)

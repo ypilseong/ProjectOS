@@ -3,6 +3,7 @@ from app.config import config
 from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
 from app.utils.logger import get_logger
+from app.services.ontology_context import format_prompt_context
 
 logger = get_logger(__name__)
 
@@ -21,10 +22,10 @@ class OntologyAgent:
     def __init__(self):
         self._llm = LLMClient.for_role(Role.ONTOLOGY)
 
-    async def run(self, chunks: list[TextChunk]) -> Ontology:
+    async def run(self, chunks: list[TextChunk], project_context: dict | None = None) -> Ontology:
         sample = self._build_sample(chunks)
         logger.info(f"OntologyAgent: analysing {len(sample)} chars from {len(chunks)} chunks")
-        prompt = self._build_prompt(sample)
+        prompt = self._build_prompt(sample, project_context=project_context)
         result = await self._llm.chat_json([{"role": "user", "content": prompt}])
         return self._parse_result(result)
 
@@ -32,10 +33,13 @@ class OntologyAgent:
         combined = "\n\n".join(c.text for c in chunks)
         return combined[:config.MAX_ONTOLOGY_SAMPLE_CHARS]
 
-    def _build_prompt(self, sample: str) -> str:
+    def _build_prompt(self, sample: str, project_context: dict | None = None) -> str:
         fixed_entities = ", ".join(self.FIXED_ENTITY_TYPES)
         fixed_edges = ", ".join(self.FIXED_EDGE_TYPES)
+        context_block = format_prompt_context(project_context)
+        context_text = f"\n{context_block}\n" if context_block else ""
         return f"""You are designing an ontology for a career/project knowledge graph.
+{context_text}
 
 Allowed entity types (use ONLY these, do not add any others): {fixed_entities}
 Allowed relation types (use ONLY these, do not add any others): {fixed_edges}
@@ -47,6 +51,8 @@ Entity type rules:
 - Skill includes programming languages, frameworks, methods, tools, technical keywords, and platform/model names. Do not create a separate Technology type.
 - Examples: Python, Vue, NetworkX, LLM, GPT, Gemini -> Skill; ProjectOS -> Project; papers/documents -> Publication; awards, metrics, or concrete outcomes -> Achievement.
 - Entities shown in the UI should be meaningful career/project objects, not chunks, vague topics, sentence fragments, or generic nouns.
+- Use the project and user intent context to tune descriptions, examples, and analysis_summary toward the user's goal.
+- Keep the allowed type names fixed; the intent should guide prioritization and interpretation, not introduce new ontology types.
 - Entity type names and relation type names must be English.
 - Extracted entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
 

@@ -15,6 +15,7 @@ from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
 from app.utils.logger import get_logger
 from app.utils.user_config import get_user_name_values, get_user_name_variants, load_user_config
+from app.services.ontology_context import format_prompt_context
 
 logger = get_logger(__name__)
 
@@ -165,9 +166,11 @@ class GraphBuilderAgent:
         graph_path: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
         capture_context: dict[str, dict] | None = None,
+        project_context: dict | None = None,
     ) -> nx.DiGraph:
         graph = nx.DiGraph()
         self._capture_context = capture_context or {}
+        self._project_context = project_context or {}
         if incremental and graph_path and Path(graph_path).exists():
             data = json.loads(Path(graph_path).read_text())
             # normalize legacy 'links' key back to 'edges' for nx.node_link_graph compatibility
@@ -233,6 +236,10 @@ class GraphBuilderAgent:
         user_ctx = f"\n{self._user_context}\n" if self._user_context else ""
         doc_rules = self._document_type_rules(chunk.file_type)
         doc_rules_block = f"\n{doc_rules}\n" if doc_rules else ""
+        project_context_block = format_prompt_context(
+            getattr(self, "_project_context", None)
+        )
+        project_context_text = f"\n{project_context_block}\n" if project_context_block else ""
         capture = getattr(self, "_capture_context", {}).get(chunk.source_file)
         capture_block = ""
         if capture:
@@ -245,11 +252,13 @@ class GraphBuilderAgent:
                 "Do not invent entities unrelated to the source text.\n"
             )
         prompt = f"""Extract entities and relations from the text below.
-{capture_block}{user_ctx}
+{project_context_text}{capture_block}{user_ctx}
 Allowed entity types: {', '.join(entity_types)}
 Allowed relation types: {', '.join(edge_types)}
 
 Extraction rules:
+- Use the project and ontology intent context to prioritize which grounded entities and relations matter most for this graph.
+- The intent may guide emphasis, but every extracted entity and relation must still be supported by the source text.
 - Do not create entities for chunks, pages, sections, or raw text snippets.
 - Extract important skills, tools, methods, model names, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
 - Use Achievement only for official or record-like profile accomplishments: GPA/grades, honors, scholarships, awards, competition placements, accepted publications, or formally measured academic/professional results. Do not use Achievement for certificates/exam names, insights, motivations, interests, lessons learned, effort, responsibilities, or ordinary project activities; classify certificates/exams as Skill when useful.
