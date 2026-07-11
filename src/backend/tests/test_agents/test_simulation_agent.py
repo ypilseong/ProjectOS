@@ -456,6 +456,68 @@ def test_fallback_personas_excludes_meta_hubs():
     assert all(p.name != "Skills" for p in personas)
 
 
+@pytest.mark.asyncio
+async def test_debate_and_synthesis_prompts_require_structured_evidence_refs():
+    from app.agents.simulation_agent import EVIDENCE_REF_RULE, ProjectSimulationAgent
+
+    captured_prompts = []
+
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    chunks = [TextChunk("c1", "Yang built ProjectOS.", "cv.pdf", "cv", None, 0)]
+    personas = [
+        PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective"),
+        PersonaAgentSpec(agent_id="agent_2", name="Reviewer", role="Evidence reviewer"),
+    ]
+    environment = EnvironmentSpec(objective="Improve CV", rounds=2)
+
+    class FakePersonaAgent:
+        async def run(self, graph, chunks, query="", max_agents=8):
+            return personas
+
+    class FakeEnvironmentAgent:
+        async def run(self, graph, chunks, personas, query=""):
+            return environment
+
+    class PromptCapturingLLM:
+        model = "fake-model"
+
+        async def chat_json(self, messages):
+            prompt = messages[0]["content"]
+            captured_prompts.append(prompt)
+            if "debate의 다음 발언" in prompt:
+                return {
+                    "observation": "관찰", "proposal": "제안",
+                    "evidence_refs": ["Skill:Python"],
+                    "responds_to": "", "unresolved_questions": [],
+                }
+            return {
+                "timeline": [], "graph_enhancements": {"nodes": [], "edges": []},
+                "cv_improvements": {}, "report": {"title": "t", "answer": "a",
+                "recommendations": [], "evidence": []},
+            }
+
+    agent = ProjectSimulationAgent(
+        persona_agent=FakePersonaAgent(),
+        environment_agent=FakeEnvironmentAgent(),
+        llm=PromptCapturingLLM(),
+    )
+    await agent.run(graph, chunks, query="테스트 쿼리", apply_graph=False)
+
+    debate_prompts = [p for p in captured_prompts if "debate의 다음 발언" in p]
+    synthesis_prompts = [p for p in captured_prompts if "종합해" in p]
+    assert debate_prompts and synthesis_prompts
+    assert all(EVIDENCE_REF_RULE in p for p in debate_prompts)
+    assert all(EVIDENCE_REF_RULE in p for p in synthesis_prompts)
+
+
+def test_evidence_ref_rule_names_both_formats():
+    from app.agents.simulation_agent import EVIDENCE_REF_RULE
+
+    assert "타입:이름" in EVIDENCE_REF_RULE
+    assert "chunk:" in EVIDENCE_REF_RULE
+
+
 def test_simulation_agents_force_local_llm(monkeypatch):
     from app.agents.simulation_agent import (
         EnvironmentRulesAgent,

@@ -20,6 +20,13 @@ _MAX_DEBATE_PERSONAS = 5
 _MAX_DEBATE_HISTORY_TURNS = 12
 _DEBATE_ENGINE_VERSION = "debate-v2"
 
+EVIDENCE_REF_RULE = (
+    "evidence_refs/evidence 규칙: 그래프/문서 컨텍스트에 실제로 존재하는 항목만 적으세요. "
+    "노드 근거는 '타입:이름' 그대로(예: \"Skill:Python\", \"Institution:KAIST\"), "
+    "문서 근거는 'chunk:파일명#청크ID' 형식으로 적으세요. "
+    "자유 서술 문장이나 'agent_3의 제안' 같은 표현은 넣지 마세요."
+)
+
 
 @dataclass
 class PersonaAgentSpec:
@@ -344,11 +351,13 @@ class ProjectSimulationAgent:
 사용자 쿼리:
 {query or "(없음)"}
 
+{EVIDENCE_REF_RULE}
+
 JSON만 응답하세요:
 {{
   "observation": "이전 발언과 근거를 고려한 관찰 또는 반론",
   "proposal": "다음 분석/그래프/CV 개선 제안",
-  "evidence_refs": ["근거 노드 id 또는 문서/청크"],
+  "evidence_refs": ["타입:이름 또는 chunk:파일명#청크ID"],
   "responds_to": "직접 응답한 이전 turn_id 또는 빈 문자열",
   "unresolved_questions": ["남은 쟁점"]
 }}"""
@@ -390,6 +399,7 @@ JSON만 응답하세요:
 - timeline은 아래 실제 순차 debate 로그를 그대로 반영하세요.
 - 서로 다른 persona의 합의/불일치/남은 쟁점을 report와 recommendations에 반영하세요.
 - debate에 없는 새 사실은 만들지 말고 그래프/문서 컨텍스트 근거가 있는 제안만 graph_enhancements에 넣으세요.
+- {EVIDENCE_REF_RULE}
 
 페르소나:
 {personas_json}
@@ -416,10 +426,10 @@ JSON만 응답하세요:
   ],
   "graph_enhancements": {{
     "nodes": [
-      {{"type": "Skill|Project|Achievement|Role|Organization|Publication|Event|Institution", "name": "노드명", "description": "설명", "evidence": "근거"}}
+      {{"type": "Skill|Project|Achievement|Role|Organization|Publication|Event|Institution", "name": "노드명", "description": "설명", "evidence": "타입:이름 또는 chunk:파일명#청크ID"}}
     ],
     "edges": [
-      {{"source_type": "Person", "source_name": "출발 노드명", "target_type": "Skill", "target_name": "도착 노드명", "relation": "USES_SKILL", "evidence": "근거", "confidence": 0.7}}
+      {{"source_type": "Person", "source_name": "출발 노드명", "target_type": "Skill", "target_name": "도착 노드명", "relation": "USES_SKILL", "evidence": "타입:이름 또는 chunk:파일명#청크ID", "confidence": 0.7}}
     ]
   }},
   "cv_improvements": {{
@@ -431,7 +441,7 @@ JSON만 응답하세요:
     "title": "리포트 제목",
     "answer": "사용자 쿼리에 대한 답변 또는 시뮬레이션 요약",
     "recommendations": ["추천 조치"],
-    "evidence": ["근거"]
+    "evidence": ["타입:이름 또는 chunk:파일명#청크ID"]
   }}
 }}"""
         result = await self._llm.chat_json([{"role": "user", "content": prompt}])
