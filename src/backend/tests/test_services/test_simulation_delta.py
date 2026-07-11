@@ -94,6 +94,24 @@ def test_apply_edge_delta_after_node(project):
     assert ("Person:양필성", "Skill:Monte Carlo Simulation") in pairs
 
 
+def test_apply_edge_delta_without_node_is_skipped(project):
+    from app.services.simulation_delta import apply_simulation_delta
+
+    project_id, tmp_path = project
+    result = apply_simulation_delta(project_id, "delta_edge_001")
+
+    assert result["delta"]["status"] == "skipped"
+    assert result["applied"] == {"nodes_added": 0, "edges_added": 0}
+
+    graph_data = _load(tmp_path / project_id / "graph.json")
+    node_ids = {n["id"] for n in graph_data["nodes"]}
+    assert "Skill:Monte Carlo Simulation" not in node_ids
+
+    saved = _load(tmp_path / project_id / "simulation.json")
+    assert saved["graph_delta"]["edges"][0]["status"] == "skipped"
+    assert saved["graph_delta"]["summary"]["skipped"] == 1
+
+
 def test_apply_twice_raises_conflict(project):
     from app.services.simulation_delta import SimulationDeltaError, apply_simulation_delta
 
