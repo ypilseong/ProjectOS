@@ -37,6 +37,8 @@ export const projectsApi = {
   runSimulation: (id, data) => api.post(`/projects/${id}/simulation`, data),
   getSimulation: (id) => api.get(`/projects/${id}/simulation`),
   resolveSimulationEvidence: (id, data) => api.post(`/projects/${id}/simulation/evidence`, data),
+  applySimulationDelta: (id, data) => api.post(`/projects/${id}/simulation/delta/apply`, data),
+  rejectSimulationDelta: (id, data) => api.post(`/projects/${id}/simulation/delta/reject`, data),
   applyMergeCandidate: (id, data) => api.post(`/projects/${id}/graph/merge-candidates/apply`, data),
   rejectMergeCandidate: (id, data) => api.post(`/projects/${id}/graph/merge-candidates/reject`, data),
 }

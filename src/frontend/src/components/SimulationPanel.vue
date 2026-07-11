@@ -187,7 +187,7 @@
               <div class="delta-head">
                 <el-tag size="small">{{ delta.operation }}</el-tag>
                 <strong>{{ delta.label }}</strong>
-                <el-tag size="small" :type="delta.status === 'applied' ? 'success' : 'warning'">{{ delta.status }}</el-tag>
+                <el-tag size="small" :type="delta.status === 'applied' ? 'success' : delta.status === 'rejected' ? 'danger' : 'warning'">{{ delta.status }}</el-tag>
               </div>
               <div class="delta-meta">
                 {{ delta.type }} <span v-if="delta.relation">/ {{ delta.relation }}</span>
@@ -195,6 +195,10 @@
               </div>
               <p v-if="delta.statusReason">{{ delta.statusReason }}</p>
               <EvidenceList v-if="delta.evidenceRefs.length" :items="refsToEvidence(delta.evidenceRefs)" />
+              <div v-if="!readOnly && delta.status === 'proposed'" class="delta-actions">
+                <el-button size="small" type="primary" :loading="deltaActionBusy === delta.id" @click="applyDelta(delta)">승인</el-button>
+                <el-button size="small" :loading="deltaActionBusy === delta.id" @click="rejectDelta(delta)">거부</el-button>
+              </div>
             </div>
           </div>
         </el-tab-pane>
@@ -257,6 +261,7 @@ const graphMode = ref(props.readOnly ? 'delta' : 'highlight')
 const dimUnhighlighted = ref(true)
 const selectedSectionId = ref('')
 const deltaStatus = ref('all')
+const deltaActionBusy = ref(null)
 const evidenceFilter = ref('all')
 const evidenceLoading = ref(false)
 const resolvedEvidence = ref([])
@@ -380,6 +385,33 @@ async function onSimulationCompleted() {
 function onSimulationFailed(error) {
   taskId.value = null
   ElMessage.error(error || '시뮬레이션에 실패했습니다.')
+}
+
+async function applyDelta(delta) {
+  deltaActionBusy.value = delta.id
+  try {
+    await projectsApi.applySimulationDelta(props.projectId, { delta_id: delta.id })
+    ElMessage.success('그래프에 적용했습니다')
+    await loadSimulation(false)
+    const graphResponse = await projectsApi.getGraph(props.projectId)
+    emit('graph-updated', graphResponse.data)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '적용에 실패했습니다')
+  } finally {
+    deltaActionBusy.value = null
+  }
+}
+
+async function rejectDelta(delta) {
+  deltaActionBusy.value = delta.id
+  try {
+    await projectsApi.rejectSimulationDelta(props.projectId, { delta_id: delta.id })
+    await loadSimulation(false)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.detail || '거부에 실패했습니다')
+  } finally {
+    deltaActionBusy.value = null
+  }
 }
 
 function statusClass(status) {
@@ -613,6 +645,7 @@ function normalizeGraphData(graph) {
 }
 .delta-head strong { overflow-wrap: anywhere; }
 .delta-item :deep(.evidence-list) { margin-top: 8px; }
+.delta-actions { margin-top: 8px; display: flex; gap: 8px; }
 .evidence-toolbar {
   display: flex;
   align-items: center;
