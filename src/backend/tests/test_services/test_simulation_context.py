@@ -12,6 +12,7 @@ from app.services.simulation_context import (
     adapt_simulation_summary,
     load_simulation_result,
     resolve_simulation_evidence,
+    _resolve_ref,
 )
 
 
@@ -309,3 +310,54 @@ def test_load_simulation_result_rejects_path_like_run_id():
 
     with pytest.raises(ValueError, match="Simulation run not found"):
         load_simulation_result("p1", "../latest")
+
+
+def _graph_with_kaist():
+    graph = nx.DiGraph()
+    graph.add_node(
+        "Institution:KAIST", type="Institution", name="KAIST",
+        description="대학", source_files=["resume.pdf"], evidence=[],
+    )
+    graph.add_node(
+        "Skill:Python", type="Skill", name="Python",
+        description="언어", source_files=["resume.pdf"], evidence=[],
+    )
+    return graph
+
+
+def test_resolve_ref_accepts_bare_node_id():
+    item = _resolve_ref(
+        "Skill:Python",
+        chunks=[], graph=_graph_with_kaist(), events={}, sections={}, max_chars=500,
+    )
+    assert item["resolved"] is True
+    assert item["kind"] == "node"
+    assert item["node_id"] == "Skill:Python"
+
+
+def test_resolve_ref_recovers_wrong_type_prefix_by_unique_name():
+    item = _resolve_ref(
+        "Organization:KAIST",
+        chunks=[], graph=_graph_with_kaist(), events={}, sections={}, max_chars=500,
+    )
+    assert item["resolved"] is True
+    assert item["node_id"] == "Institution:KAIST"
+
+
+def test_resolve_ref_ambiguous_name_stays_unresolved():
+    graph = _graph_with_kaist()
+    graph.add_node("Organization:Python", type="Organization", name="Python")
+    item = _resolve_ref(
+        "Publication:Python",
+        chunks=[], graph=graph, events={}, sections={}, max_chars=500,
+    )
+    assert item["resolved"] is False
+
+
+def test_resolve_ref_free_text_stays_unresolved():
+    item = _resolve_ref(
+        "agent_3, agent_1의 뉴로-심볼릭 아키텍처 제안",
+        chunks=[], graph=_graph_with_kaist(), events={}, sections={}, max_chars=500,
+    )
+    assert item["resolved"] is False
+    assert item["kind"] == "unknown"

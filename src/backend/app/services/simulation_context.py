@@ -505,6 +505,42 @@ def _load_graph(project_id: str) -> nx.DiGraph:
     return nx.node_link_graph(data)
 
 
+def _node_payload(ref: str, node_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ref": ref,
+        "resolved": True,
+        "kind": "node",
+        "node_id": node_id,
+        "type": data.get("type"),
+        "name": data.get("name"),
+        "description": data.get("description", ""),
+        "source_files": list(data.get("source_files") or []),
+        "evidence": list(data.get("evidence") or []),
+    }
+
+
+def _resolve_bare_node_ref(ref: str, graph: nx.DiGraph) -> dict[str, Any] | None:
+    """Resolve refs like "Skill:Python" (no "node:" prefix) — the format LLM
+    debate turns actually emit. Tolerates a wrong type prefix when the name
+    part matches exactly one node."""
+    if ":" not in ref:
+        return None
+    if ref in graph:
+        return _node_payload(ref, ref, graph.nodes[ref])
+    _, _, name = ref.partition(":")
+    name = name.strip()
+    if not name:
+        return None
+    matches = [
+        node_id
+        for node_id, data in graph.nodes(data=True)
+        if str(data.get("name", "")).strip() == name
+    ]
+    if len(matches) != 1:
+        return None
+    return _node_payload(ref, matches[0], graph.nodes[matches[0]])
+
+
 def _resolve_ref(
     ref: str,
     *,
@@ -535,18 +571,7 @@ def _resolve_ref(
     elif ref.startswith("node:"):
         node_id = ref[len("node:"):]
         if node_id in graph:
-            data = graph.nodes[node_id]
-            return {
-                "ref": ref,
-                "resolved": True,
-                "kind": "node",
-                "node_id": node_id,
-                "type": data.get("type"),
-                "name": data.get("name"),
-                "description": data.get("description", ""),
-                "source_files": list(data.get("source_files") or []),
-                "evidence": list(data.get("evidence") or []),
-            }
+            return _node_payload(ref, node_id, graph.nodes[node_id])
     elif ref.startswith("edge:"):
         parsed = _parse_edge_ref(ref)
         if parsed:
@@ -576,6 +601,9 @@ def _resolve_ref(
                 section["body"], section["truncated"] = _truncate(str(section["body"]), max_chars)
             return {"ref": ref, "resolved": True, "kind": "report", "section": section}
 
+    bare = _resolve_bare_node_ref(ref, graph)
+    if bare is not None:
+        return bare
     return {"ref": ref, "resolved": False, "kind": "unknown"}
 
 
