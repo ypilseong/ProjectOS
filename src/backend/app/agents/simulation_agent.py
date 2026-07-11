@@ -229,6 +229,12 @@ class ProjectSimulationAgent:
         raw_result, lineage = await self._simulate(graph, chunks, personas, environment, query, cv_text)
         legacy_result = self._normalize_legacy_result(raw_result, personas, environment, query)
 
+        from app.utils.graph_delta_validation import validate_graph_enhancements
+
+        legacy_result["graph_enhancements"] = validate_graph_enhancements(
+            graph, legacy_result.get("graph_enhancements", {})
+        )
+
         applied = {"nodes_added": 0, "edges_added": 0}
         delta_statuses = _proposed_delta_statuses(legacy_result.get("graph_enhancements", {}))
         if apply_graph:
@@ -400,6 +406,7 @@ JSON만 응답하세요:
 - 서로 다른 persona의 합의/불일치/남은 쟁점을 report와 recommendations에 반영하세요.
 - debate에 없는 새 사실은 만들지 말고 그래프/문서 컨텍스트 근거가 있는 제안만 graph_enhancements에 넣으세요.
 - {EVIDENCE_REF_RULE}
+- graph_enhancements.edges의 relation은 다음 중에서만 선택: WORKED_AT, DEVELOPED, USES_SKILL, AUTHORED, COLLABORATED_WITH, ACHIEVED, PARTICIPATED_IN, PUBLISHED_AT, MENTORED_BY, LED_BY
 
 페르소나:
 {personas_json}
@@ -894,6 +901,7 @@ def _build_graph_delta(
             "evidence_refs": _evidence_refs(node.get("evidence_refs") or node.get("evidence")),
             "source_event_ids": [],
             "source_report_section_ids": ["section_graph_delta"],
+            "duplicate_of": str(node.get("duplicate_of") or ""),
             "status": status["status"],
             "status_reason": status.get("status_reason", ""),
         })
@@ -919,6 +927,7 @@ def _build_graph_delta(
             "target_type": target_type,
             "target_name": target_name,
             "relation": str(edge.get("relation") or "RELATED_TO"),
+            "relation_raw": str(edge.get("relation_raw") or ""),
             "confidence": _numeric_or_none(edge.get("confidence")),
             "evidence_refs": _evidence_refs(edge.get("evidence_refs") or edge.get("evidence")),
             "source_event_ids": [],
@@ -978,9 +987,22 @@ def _default_lineage(timeline: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _proposed_delta_statuses(enhancements: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    node_statuses = []
+    for node in enhancements.get("nodes", []) or []:
+        duplicate_of = str(node.get("duplicate_of") or "")
+        if duplicate_of:
+            node_statuses.append({
+                "status": "skipped",
+                "status_reason": f"Similar node already exists: {duplicate_of}",
+            })
+        else:
+            node_statuses.append({"status": "proposed", "status_reason": ""})
     return {
-        "nodes": [{"status": "proposed", "status_reason": ""} for _ in enhancements.get("nodes", []) or []],
-        "edges": [{"status": "proposed", "status_reason": ""} for _ in enhancements.get("edges", []) or []],
+        "nodes": node_statuses,
+        "edges": [
+            {"status": "proposed", "status_reason": ""}
+            for _ in enhancements.get("edges", []) or []
+        ],
     }
 
 
@@ -1024,6 +1046,14 @@ def _apply_graph_enhancements_with_status(
             node_statuses.append({
                 "status": "skipped",
                 "status_reason": "Missing node type or name.",
+                "node_id": node_id,
+            })
+            continue
+        duplicate_of = str(node.get("duplicate_of") or "")
+        if duplicate_of:
+            node_statuses.append({
+                "status": "skipped",
+                "status_reason": f"Similar node already exists: {duplicate_of}",
                 "node_id": node_id,
             })
             continue

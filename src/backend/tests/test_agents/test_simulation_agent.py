@@ -531,3 +531,67 @@ def test_simulation_agents_force_local_llm(monkeypatch):
     assert PersonaSimulationAgent()._llm._impl.__class__.__name__ == "_OpenAIBackend"
     assert EnvironmentRulesAgent()._llm._impl.__class__.__name__ == "_OpenAIBackend"
     assert ProjectSimulationAgent()._llm._impl.__class__.__name__ == "_OpenAIBackend"
+
+
+@pytest.mark.asyncio
+async def test_run_marks_duplicate_delta_as_skipped_without_applying():
+    # graph fixture contains the existing node that the LLM will duplicate
+    graph = nx.DiGraph()
+    graph.add_node("Person:Yang", type="Person", name="Yang")
+    graph.add_node("Skill:Cross-Impact Balance", type="Skill", name="Cross-Impact Balance")
+
+    chunks = [TextChunk("c1", "Yang uses Cross-Impact Balance.", "cv.pdf", "cv", None, 0)]
+
+    persona = PersonaAgentSpec(agent_id="agent_1", name="Yang", role="Person perspective")
+    environment = EnvironmentSpec(objective="Improve CV", rounds=1)
+
+    class FakePersonaAgent:
+        async def run(self, graph, chunks, query="", max_agents=8):
+            return [persona]
+
+    class FakeEnvironmentAgent:
+        async def run(self, graph, chunks, personas, query=""):
+            return environment
+
+    class FakeLlm:
+        async def chat_json(self, messages):
+            prompt = messages[-1]["content"]
+            # synthesis call
+            if "다음 ProjectOS 페르소나 debate 로그를 종합" in prompt:
+                return {
+                    "graph_enhancements": {
+                        "nodes": [
+                            {
+                                "type": "Skill",
+                                "name": "Cross-Impact Balance (CIB)",
+                                "description": "d",
+                                "evidence": "Skill:Cross-Impact Balance",
+                            }
+                        ],
+                        "edges": [],
+                    },
+                    "cv_improvements": {},
+                    "report": {"title": "t", "answer": "a"},
+                }
+            # debate turn call
+            return {
+                "observation": "obs",
+                "proposal": "prop",
+                "evidence_refs": [],
+                "responds_to": "",
+                "unresolved_questions": [],
+            }
+
+    agent = ProjectSimulationAgent(
+        persona_agent=FakePersonaAgent(),
+        environment_agent=FakeEnvironmentAgent(),
+        llm=FakeLlm(),
+    )
+
+    result = await agent.run(graph, chunks, query="q", apply_graph=True)
+
+    node_delta = result["graph_delta"]["nodes"][0]
+    assert node_delta["status"] == "skipped"
+    assert "Skill:Cross-Impact Balance" in node_delta["status_reason"]
+    assert "Skill:Cross-Impact Balance (CIB)" not in graph
+    assert result["applied_graph_changes"]["nodes_added"] == 0
