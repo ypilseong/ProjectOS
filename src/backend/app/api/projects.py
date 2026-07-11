@@ -11,6 +11,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.config import config
 from app.models.project import ProjectStatus, TaskStatus
@@ -347,6 +348,31 @@ async def get_simulation(project_id: str):
     if not p.exists():
         raise HTTPException(status_code=404, detail="Simulation not run yet")
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+class SimulationDeltaAction(BaseModel):
+    delta_id: str
+    reason: str = ""
+
+
+@router.post("/{project_id}/simulation/delta/apply")
+async def apply_simulation_delta_endpoint(project_id: str, body: SimulationDeltaAction):
+    from app.services.simulation_delta import SimulationDeltaError, apply_simulation_delta
+
+    try:
+        return apply_simulation_delta(project_id, body.delta_id)
+    except SimulationDeltaError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
+
+
+@router.post("/{project_id}/simulation/delta/reject")
+async def reject_simulation_delta_endpoint(project_id: str, body: SimulationDeltaAction):
+    from app.services.simulation_delta import SimulationDeltaError, reject_simulation_delta
+
+    try:
+        return reject_simulation_delta(project_id, body.delta_id, body.reason)
+    except SimulationDeltaError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
 
 
 @router.post("/{project_id}/simulation/evidence")
