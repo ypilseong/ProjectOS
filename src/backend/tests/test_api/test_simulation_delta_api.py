@@ -95,3 +95,4 @@ def test_reject_delta_endpoint_persists_reason(client, project):
     )
     assert resp.status_code == 200
     assert resp.json()["delta"]["status"] == "rejected"
+    assert resp.json()["delta"]["status_reason"] == "근거 부족"
