@@ -55,7 +55,11 @@ class Config(BaseSettings):
     EMBEDDING_BASE_URL: str = ""
     EMBEDDING_MODEL: str = "BAAI/bge-m3"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.88
+    # MERGE_REVIEW_THRESHOLD is kept for backward compat; candidate collection
+    # now uses the strict threshold + containment/acronym rules below.
     MERGE_REVIEW_THRESHOLD: float = 0.80
+    MERGE_REVIEW_STRICT_THRESHOLD: float = 0.93
+    MERGE_REVIEW_MIN_NAME_LEN: int = 4
     ISOLATED_REEXTRACT_ENABLED: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}

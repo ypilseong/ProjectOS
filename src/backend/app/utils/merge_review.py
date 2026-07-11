@@ -16,6 +16,17 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
+def _normalized(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _is_containment(a: str, b: str) -> bool:
+    na, nb = _normalized(a), _normalized(b)
+    if min(len(na), len(nb)) < 4:
+        return False
+    return na != nb and (na in nb or nb in na)
+
+
 def _node_aliases(data: dict) -> set[str]:
     aliases = {str(a).strip() for a in (data.get("aliases") or []) if str(a).strip()}
     name = str(data.get("name", "")).strip()
@@ -38,7 +49,9 @@ def collect_merge_candidates(
     visible instead of being silently collapsed.
     """
     if threshold is None:
-        threshold = config.MERGE_REVIEW_THRESHOLD
+        strict = config.MERGE_REVIEW_STRICT_THRESHOLD
+    else:
+        strict = threshold
 
     by_type: dict[str, list[str]] = {}
     for node_id, data in graph.nodes(data=True):
@@ -62,10 +75,13 @@ def collect_merge_candidates(
                 name_b = str(data_b.get("name", "")).strip()
 
                 acronym = are_acronym_variants(name_a, name_b)
-                sim = _similarity(name_a, name_b)
-                if not acronym and sim < threshold:
+                if min(len(name_a), len(name_b)) < config.MERGE_REVIEW_MIN_NAME_LEN and not acronym:
                     continue
-                confidence = 1.0 if acronym else round(sim, 4)
+                containment = _is_containment(name_a, name_b)
+                sim = _similarity(name_a, name_b)
+                if not (acronym or containment or sim >= strict):
+                    continue
+                confidence = 1.0 if acronym else round(max(sim, 0.9) if containment else sim, 4)
 
                 # Keep = higher degree (more connected node wins canonical role).
                 if graph.degree(id_a) >= graph.degree(id_b):

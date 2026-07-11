@@ -54,8 +54,12 @@ def test_candidate_includes_aliases():
         source_files=[],
         aliases=["sklearn"],
     )
+    # "Scikit learn" (space) scored ~0.917 under the old 0.80 threshold but falls
+    # just below the new strict 0.93 (both normalize to "scikitlearn", so containment
+    # also doesn't trigger).  "Scikitlearn" (no separator) gives similarity 22/23
+    # ≈ 0.957 which qualifies under the strict threshold and is a realistic variant.
     g.add_node(
-        "Skill:Scikit learn", type="Skill", name="Scikit learn", source_files=[]
+        "Skill:Scikitlearn", type="Skill", name="Scikitlearn", source_files=[]
     )
 
     candidates = collect_merge_candidates(g)
@@ -63,7 +67,7 @@ def test_candidate_includes_aliases():
     assert len(candidates) == 1
     aliases = set(candidates[0]["aliases"])
     # Both surface forms plus any prior aliases are surfaced for the reviewer.
-    assert {"Scikit-learn", "Scikit learn", "sklearn"} <= aliases
+    assert {"Scikit-learn", "Scikitlearn", "sklearn"} <= aliases
 
 
 def test_skips_meta_nodes():
@@ -141,3 +145,65 @@ def test_denylist_only_filters_listed_pair():
     pairs = {frozenset({c["keep_id"], c["candidate_id"]}) for c in candidates}
     assert frozenset({"Skill:TensorFlow", "Skill:Tensorflow"}) not in pairs
     assert frozenset({"Skill:PyTorch", "Skill:Pytorch"}) in pairs
+
+
+# ---------------------------------------------------------------------------
+# False-positive guard tests (Task 7)
+# ---------------------------------------------------------------------------
+
+def _pairs(candidates):
+    return {frozenset({c["keep_id"], c["candidate_id"]}) for c in candidates}
+
+
+def test_short_name_pairs_require_acronym_match():
+    g = nx.DiGraph()
+    g.add_node("Skill:AI", type="Skill", name="AI")
+    g.add_node("Skill:AMI", type="Skill", name="AMI")
+    assert collect_merge_candidates(g) == []
+
+
+def test_single_char_variant_metrics_not_candidates():
+    g = nx.DiGraph()
+    g.add_node("Skill:cpWER", type="Skill", name="cpWER")
+    g.add_node("Skill:cpCER", type="Skill", name="cpCER")
+    assert collect_merge_candidates(g) == []
+
+
+def test_similar_but_semantically_distinct_words_not_candidates():
+    g = nx.DiGraph()
+    g.add_node("Skill:simulation", type="Skill", name="simulation")
+    g.add_node("Skill:estimation", type="Skill", name="estimation")
+    assert collect_merge_candidates(g) == []
+
+
+def test_containment_pairs_still_surface():
+    g = nx.DiGraph()
+    g.add_node("Skill:SOT fine-tuning", type="Skill", name="SOT fine-tuning")
+    g.add_node("Skill:Fine-Tuning", type="Skill", name="Fine-Tuning")
+    g.add_node(
+        "Achievement:2024.08 Semester High Honors",
+        type="Achievement", name="2024.08 Semester High Honors",
+    )
+    g.add_node(
+        "Achievement:Semester High Honors",
+        type="Achievement", name="Semester High Honors",
+    )
+    pairs = _pairs(collect_merge_candidates(g))
+    assert frozenset({"Skill:SOT fine-tuning", "Skill:Fine-Tuning"}) in pairs
+    assert frozenset({
+        "Achievement:2024.08 Semester High Honors",
+        "Achievement:Semester High Honors",
+    }) in pairs
+
+
+def test_different_urls_not_candidates():
+    g = nx.DiGraph()
+    g.add_node(
+        "Publication:https://arxiv.org/html/2603.02128v1",
+        type="Publication", name="https://arxiv.org/html/2603.02128v1",
+    )
+    g.add_node(
+        "Publication:https://arxiv.org/html/2602.19623v1",
+        type="Publication", name="https://arxiv.org/html/2602.19623v1",
+    )
+    assert collect_merge_candidates(g) == []
