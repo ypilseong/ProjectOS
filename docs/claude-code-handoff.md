@@ -18,17 +18,17 @@ This is the compact handoff. The previous file had grown into a long chronologic
 
 ### Graph Quality Guards + Simulation Delta Review Flow (2026-07-12)
 
-Six targeted quality improvements shipped on branch `graph-simulation-quality` (commits 77c40cf..89b5aea):
+Six targeted quality improvements shipped on branch `graph-simulation-quality` (commits 77c40cf through 34e2a96):
 
 1. **Evidence ref resolution** — `_resolve_ref` in `app/services/simulation_context.py` now resolves bare `"Type:Name"` refs and wrong-type prefixes via unique-name fallback. `EVIDENCE_REF_RULE` constant enforces structured refs (`타입:이름` / `chunk:파일명#청크ID`) in both debate and synthesis prompts.
 2. **Delta draft validation** — new `app/utils/graph_delta_validation.py`: fuzzy/acronym duplicate detection annotates `duplicate_of` (e.g. `"Cross-Impact Balance (CIB)"` vs existing `"Cross-Impact Balance"` is auto-skipped, edges remapped); relation whitelist normalizes off-schema relations to `RELATED_TO` preserving `relation_raw`; synthesis prompt now names all 10 allowed relations.
-3. **Delta review flow** — new `app/services/simulation_delta.py` + `POST /api/projects/{id}/simulation/delta/apply|reject` endpoints + 승인/거부 buttons with 3-state status tags in `SimulationPanel.vue` delta cards. Applied deltas refresh layers via `classify_node_layers` and persist to both `simulation.json` and the archived simulation file.
+3. **Delta review flow** — new `app/services/simulation_delta.py` + `POST /api/projects/{id}/simulation/delta/apply|reject` endpoints + 승인/거부 buttons with 3-state status tags in `SimulationPanel.vue` delta cards. Applied deltas refresh layers via `classify_node_layers` and persist to both `simulation.json` and the archived simulation file. Review-time apply also runs `validate_graph_enhancements`, so legacy pre-branch deltas (off-schema relations, missing `duplicate_of`) are normalized/skipped instead of written verbatim (34e2a96).
 4. **Merge candidate guards** — `collect_merge_candidates`: threshold raised to `MERGE_REVIEW_STRICT_THRESHOLD = 0.93`; names shorter than 4 chars require an acronym match. Eliminates AI↔AMI, cpWER↔cpCER, simulation↔estimation false positives while keeping containment and punctuation-variant pairs.
 5. **Debate aggregation** — synthesis prompt emits `debate_synthesis` block; `_build_debate` merges synthesis agreements/disagreements/unresolved with turn-level question rollup (capped at 20).
 6. **Career layer fix** — `USES_SKILL` propagates the `career` layer only from the user `Person` node (new `_USER_ONLY_RELATIONS`), fixing the 108/168-skill career flooding problem.
 
 Verification (2026-07-12):
-- `cd src/backend && python3 -m pytest tests/ -q` → **563 passed**, 100 warnings
+- `cd src/backend && python3 -m pytest tests/ -q` → **565 passed** (563 at cef15b6 + 2 legacy-delta tests in 34e2a96), 100 warnings
 - `cd src/frontend && npx vitest run` → **11 passed** (2 test files)
 - `cd src/frontend && npm run build` → **success** (chunk-size advisory only)
 - Smoke test (service layer, no server): `reject_simulation_delta("21fc2ce5", "delta_node_002", reason="기존 Skill:Cross-Impact Balance와 중복")` → `delta.status: rejected`; verified `projects/21fc2ce5/simulation.json` and `projects/21fc2ce5/simulations/sim_20260628_152220_230888.json` both updated.
