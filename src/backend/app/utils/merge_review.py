@@ -24,7 +24,7 @@ def _is_containment(a: str, b: str) -> bool:
     na, nb = _normalized(a), _normalized(b)
     if min(len(na), len(nb)) < 4:
         return False
-    return na != nb and (na in nb or nb in na)
+    return na in nb or nb in na
 
 
 def _node_aliases(data: dict) -> set[str]:

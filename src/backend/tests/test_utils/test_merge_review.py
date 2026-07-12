@@ -54,20 +54,21 @@ def test_candidate_includes_aliases():
         source_files=[],
         aliases=["sklearn"],
     )
-    # "Scikit learn" (space) scored ~0.917 under the old 0.80 threshold but falls
-    # just below the new strict 0.93 (both normalize to "scikitlearn", so containment
-    # also doesn't trigger).  "Scikitlearn" (no separator) gives similarity 22/23
-    # ≈ 0.957 which qualifies under the strict threshold and is a realistic variant.
+    # "Scikit learn" (space) and "Scikit-learn" (hyphen) both normalize to
+    # "scikitlearn", so they now qualify via containment (equal normalized names).
+    # Confidence: max(sim≈0.9167, 0.9) ≈ 0.9167.
     g.add_node(
-        "Skill:Scikitlearn", type="Skill", name="Scikitlearn", source_files=[]
+        "Skill:Scikit learn", type="Skill", name="Scikit learn", source_files=[]
     )
 
     candidates = collect_merge_candidates(g)
 
     assert len(candidates) == 1
-    aliases = set(candidates[0]["aliases"])
+    cand = candidates[0]
+    assert cand["confidence"] >= 0.9167
+    aliases = set(cand["aliases"])
     # Both surface forms plus any prior aliases are surfaced for the reviewer.
-    assert {"Scikit-learn", "Scikitlearn", "sklearn"} <= aliases
+    assert {"Scikit-learn", "Scikit learn", "sklearn"} <= aliases
 
 
 def test_skips_meta_nodes():
@@ -194,6 +195,14 @@ def test_containment_pairs_still_surface():
         "Achievement:2024.08 Semester High Honors",
         "Achievement:Semester High Honors",
     }) in pairs
+
+
+def test_punctuation_variants_surface_as_candidates():
+    g = nx.DiGraph()
+    g.add_node("Skill:fine-tuning", type="Skill", name="fine-tuning")
+    g.add_node("Skill:fine tuning", type="Skill", name="fine tuning")
+    pairs = _pairs(collect_merge_candidates(g))
+    assert frozenset({"Skill:fine-tuning", "Skill:fine tuning"}) in pairs
 
 
 def test_different_urls_not_candidates():
