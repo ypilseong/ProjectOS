@@ -439,6 +439,11 @@ JSON만 응답하세요:
       {{"source_type": "Person", "source_name": "출발 노드명", "target_type": "Skill", "target_name": "도착 노드명", "relation": "USES_SKILL", "evidence": "타입:이름 또는 chunk:파일명#청크ID", "confidence": 0.7}}
     ]
   }},
+  "debate_synthesis": {{
+    "agreements": ["persona들이 합의한 사항"],
+    "disagreements": ["끝까지 갈린 쟁점"],
+    "unresolved_questions": ["추가 검증이 필요한 질문"]
+  }},
   "cv_improvements": {{
     "summary": "개선 요약",
     "improved_draft": "개선된 CV/문서 초안 또는 빈 문자열",
@@ -471,6 +476,7 @@ JSON만 응답하세요:
             "graph_enhancements": result.get("graph_enhancements", {"nodes": [], "edges": []}),
             "cv_improvements": result.get("cv_improvements", {}),
             "report": result.get("report", {}),
+            "debate_synthesis": result.get("debate_synthesis", {}),
         }
 
 
@@ -512,7 +518,11 @@ def build_simulation_result_v2(
     graph_delta = _build_graph_delta(legacy_result.get("graph_enhancements", {}), delta_statuses)
     report_sections = _build_report_sections(legacy_result, graph_delta)
     v2_personas = [_persona_to_v2(persona) for persona in personas]
-    debate = _build_debate(legacy_result.get("timeline", []), v2_personas)
+    debate = _build_debate(
+        legacy_result.get("timeline", []),
+        v2_personas,
+        legacy_result.get("debate_synthesis"),
+    )
     workflow_steps = _build_workflow_steps(
         v2_personas,
         debate,
@@ -673,7 +683,11 @@ def _environment_to_v2(environment: EnvironmentSpec) -> dict[str, Any]:
     }
 
 
-def _build_debate(timeline: list[dict[str, Any]], personas: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_debate(
+    timeline: list[dict[str, Any]],
+    personas: list[dict[str, Any]],
+    synthesis: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     persona_ids = {persona["id"] for persona in personas}
     turns = []
     for idx, item in enumerate(timeline or []):
@@ -695,11 +709,21 @@ def _build_debate(timeline: list[dict[str, Any]], personas: list[dict[str, Any]]
                 if value
             ],
         })
+
+    synthesis = synthesis or {}
+    unresolved: list[str] = [
+        str(q).strip() for q in synthesis.get("unresolved_questions", []) if str(q).strip()
+    ]
+    for turn in turns:
+        for question in turn["unresolved_questions"]:
+            if question not in unresolved:
+                unresolved.append(question)
+
     return {
         "turns": turns,
-        "agreements": [],
-        "disagreements": [],
-        "unresolved_questions": [],
+        "agreements": [str(a).strip() for a in synthesis.get("agreements", []) if str(a).strip()],
+        "disagreements": [str(d).strip() for d in synthesis.get("disagreements", []) if str(d).strip()],
+        "unresolved_questions": unresolved[:20],
     }
 
 

@@ -511,6 +511,44 @@ async def test_debate_and_synthesis_prompts_require_structured_evidence_refs():
     assert all(EVIDENCE_REF_RULE in p for p in synthesis_prompts)
 
 
+def test_build_debate_aggregates_synthesis_and_turn_questions():
+    from app.agents.simulation_agent import _build_debate
+
+    timeline = [
+        {"turn_id": "turn_001", "round": 1, "agent_id": "agent_1",
+         "observation": "관찰1", "proposal": "제안1", "evidence_refs": [],
+         "unresolved_questions": ["Q-턴1", "Q-공통"]},
+        {"turn_id": "turn_002", "round": 1, "agent_id": "agent_2",
+         "observation": "관찰2", "proposal": "제안2", "evidence_refs": [],
+         "unresolved_questions": ["Q-공통", "Q-턴2"]},
+    ]
+    personas = [{"id": "agent_1"}, {"id": "agent_2"}]
+    synthesis = {
+        "agreements": ["뉴로-심볼릭 분리 채택"],
+        "disagreements": ["프레이밍 레이어 허용 여부"],
+        "unresolved_questions": ["Q-합성"],
+    }
+
+    debate = _build_debate(timeline, personas, synthesis)
+
+    assert debate["agreements"] == ["뉴로-심볼릭 분리 채택"]
+    assert debate["disagreements"] == ["프레이밍 레이어 허용 여부"]
+    assert debate["unresolved_questions"] == ["Q-합성", "Q-턴1", "Q-공통", "Q-턴2"]
+
+
+def test_build_debate_without_synthesis_rolls_up_turn_questions():
+    from app.agents.simulation_agent import _build_debate
+
+    timeline = [
+        {"turn_id": "turn_001", "round": 1, "agent_id": "agent_1",
+         "observation": "관찰", "proposal": "제안", "evidence_refs": [],
+         "unresolved_questions": ["Q1"]},
+    ]
+    debate = _build_debate(timeline, [{"id": "agent_1"}])
+    assert debate["unresolved_questions"] == ["Q1"]
+    assert debate["agreements"] == []
+
+
 def test_evidence_ref_rule_names_both_formats():
     from app.agents.simulation_agent import EVIDENCE_REF_RULE
 
