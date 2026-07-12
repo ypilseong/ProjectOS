@@ -117,10 +117,24 @@ def apply_simulation_delta(project_id: str, delta_id: str) -> dict[str, Any]:
     if item.get("status") != "proposed":
         raise SimulationDeltaError(409, f"Delta {delta_id} is already {item.get('status')}")
 
+    from app.utils.graph_delta_validation import validate_graph_enhancements
+
     graph = _load_graph(proj_dir)
-    applied, statuses = _apply_graph_enhancements_with_status(
-        graph, _delta_to_enhancements(kind, item)
-    )
+    enhancements = validate_graph_enhancements(graph, _delta_to_enhancements(kind, item))
+
+    # Write validation outcomes back to the stored delta item for transparency.
+    if kind == "nodes" and enhancements["nodes"]:
+        validated_node = enhancements["nodes"][0]
+        dup = validated_node.get("duplicate_of") or ""
+        if dup:
+            item["duplicate_of"] = dup
+    elif kind == "edges" and enhancements["edges"]:
+        validated_edge = enhancements["edges"][0]
+        if "relation_raw" in validated_edge:
+            item["relation_raw"] = validated_edge["relation_raw"]
+            item["relation"] = validated_edge["relation"]
+
+    applied, statuses = _apply_graph_enhancements_with_status(graph, enhancements)
     status = (statuses["nodes"] or statuses["edges"])[0]
     item["status"] = status["status"]
     item["status_reason"] = status.get("status_reason", "")

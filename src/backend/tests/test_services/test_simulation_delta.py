@@ -142,3 +142,143 @@ def test_unknown_delta_raises_404(project):
     with pytest.raises(SimulationDeltaError) as exc:
         apply_simulation_delta(project_id, "delta_node_999")
     assert exc.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Legacy-delta validation tests (I-1 fix)
+# ---------------------------------------------------------------------------
+
+def _write_legacy_edge_project(tmp_path: Path) -> str:
+    """Legacy simulation.json with an edge whose relation is off-schema (TARGET_COMPETENCE)
+    and has no relation_raw key — simulates a file written before this branch."""
+    project_id = "legacy_edge_proj"
+    proj_dir = tmp_path / project_id
+    proj_dir.mkdir()
+    (proj_dir / "simulations").mkdir()
+
+    graph = nx.DiGraph()
+    graph.add_node("Person:양필성", type="Person", name="양필성")
+    graph.add_node("Skill:Python", type="Skill", name="Python")
+    out = json_graph.node_link_data(graph)
+    (proj_dir / "graph.json").write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    (proj_dir / "chunks.json").write_text("[]", encoding="utf-8")
+
+    simulation = {
+        "schema_version": "2.0",
+        "run_id": "sim_legacy_edge",
+        "graph_delta": {
+            "summary": {"proposed_nodes": 0, "proposed_edges": 1,
+                        "applied_nodes": 0, "applied_edges": 0, "skipped": 0},
+            "nodes": [],
+            "edges": [{
+                "delta_id": "legacy_edge_001", "operation": "add",
+                "source_type": "Person", "source_name": "양필성",
+                "target_type": "Skill", "target_name": "Python",
+                # Legacy off-schema relation — no relation_raw key present
+                "relation": "TARGET_COMPETENCE", "confidence": 0.75,
+                "evidence_refs": ["Person:양필성"],
+                "status": "proposed", "status_reason": "",
+            }],
+        },
+    }
+    text = json.dumps(simulation, ensure_ascii=False)
+    (proj_dir / "simulation.json").write_text(text, encoding="utf-8")
+    (proj_dir / "simulations" / "sim_legacy_edge.json").write_text(text, encoding="utf-8")
+    return project_id
+
+
+@pytest.fixture
+def legacy_edge_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    return _write_legacy_edge_project(tmp_path), tmp_path
+
+
+def test_apply_legacy_edge_delta_normalizes_off_schema_relation(legacy_edge_project):
+    from app.services.simulation_delta import apply_simulation_delta
+
+    project_id, tmp_path = legacy_edge_project
+    result = apply_simulation_delta(project_id, "legacy_edge_001")
+
+    # Apply succeeds: both endpoints exist in graph
+    assert result["delta"]["status"] == "applied"
+
+    # Graph edge uses the normalized relation
+    graph_data = _load(tmp_path / project_id / "graph.json")
+    edge_key = "links" if "links" in graph_data else "edges"
+    edges = {(e["source"], e["target"]): e for e in graph_data[edge_key]}
+    assert ("Person:양필성", "Skill:Python") in edges
+    assert edges[("Person:양필성", "Skill:Python")]["relation"] == "RELATED_TO"
+
+    # Persisted simulation.json delta reflects normalization with relation_raw
+    saved = _load(tmp_path / project_id / "simulation.json")
+    saved_edge = saved["graph_delta"]["edges"][0]
+    assert saved_edge["relation"] == "RELATED_TO"
+    assert saved_edge["relation_raw"] == "TARGET_COMPETENCE"
+
+
+def _write_legacy_node_project(tmp_path: Path) -> str:
+    """Legacy simulation.json with a node delta that is a fuzzy duplicate of an
+    existing node but was written WITHOUT the duplicate_of key — simulates a
+    file written before this branch."""
+    project_id = "legacy_node_proj"
+    proj_dir = tmp_path / project_id
+    proj_dir.mkdir()
+    (proj_dir / "simulations").mkdir()
+
+    graph = nx.DiGraph()
+    # Existing node that the proposed delta will fuzzy-match
+    graph.add_node("Skill:Cross-Impact Balance", type="Skill", name="Cross-Impact Balance")
+    out = json_graph.node_link_data(graph)
+    (proj_dir / "graph.json").write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    (proj_dir / "chunks.json").write_text("[]", encoding="utf-8")
+
+    simulation = {
+        "schema_version": "2.0",
+        "run_id": "sim_legacy_node",
+        "graph_delta": {
+            "summary": {"proposed_nodes": 1, "proposed_edges": 0,
+                        "applied_nodes": 0, "applied_edges": 0, "skipped": 0},
+            "nodes": [{
+                "delta_id": "legacy_node_001", "operation": "add",
+                "node_id": "Skill:Cross-Impact Balance (CIB)",
+                "type": "Skill", "name": "Cross-Impact Balance (CIB)",
+                "description": "상호충격균형 기법", "confidence": 0.8,
+                "evidence_refs": [],
+                # No duplicate_of key — legacy format
+                "status": "proposed", "status_reason": "",
+            }],
+            "edges": [],
+        },
+    }
+    text = json.dumps(simulation, ensure_ascii=False)
+    (proj_dir / "simulation.json").write_text(text, encoding="utf-8")
+    (proj_dir / "simulations" / "sim_legacy_node.json").write_text(text, encoding="utf-8")
+    return project_id
+
+
+@pytest.fixture
+def legacy_node_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_DIR", str(tmp_path))
+    return _write_legacy_node_project(tmp_path), tmp_path
+
+
+def test_apply_legacy_duplicate_node_delta_is_skipped(legacy_node_project):
+    from app.services.simulation_delta import apply_simulation_delta
+
+    project_id, tmp_path = legacy_node_project
+    result = apply_simulation_delta(project_id, "legacy_node_001")
+
+    # Validation detects the fuzzy duplicate → apply skips it
+    assert result["delta"]["status"] == "skipped"
+    assert "Skill:Cross-Impact Balance" in result["delta"]["status_reason"]
+
+    # The node must NOT appear in graph.json
+    graph_data = _load(tmp_path / project_id / "graph.json")
+    node_ids = {n["id"] for n in graph_data["nodes"]}
+    assert "Skill:Cross-Impact Balance (CIB)" not in node_ids
+
+    # Persisted simulation.json delta now carries duplicate_of populated by validation
+    saved = _load(tmp_path / project_id / "simulation.json")
+    saved_node = saved["graph_delta"]["nodes"][0]
+    assert saved_node["status"] == "skipped"
+    assert "Skill:Cross-Impact Balance" in saved_node["status_reason"]
