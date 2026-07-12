@@ -24,10 +24,14 @@ _OWNERSHIP_RELATIONS = {
     "HAS_ROLE",
     "ACHIEVED",
     "PARTICIPATED_IN",
-    "USES_SKILL",
     "COLLABORATED_WITH",
     "MENTORED_BY",
 }
+
+# USES_SKILL is deliberately separate: propagating it through career Projects
+# flooded the career layer (108/168 Skills in the 2026-06-28 build), so skill
+# usage only counts as career evidence when the user Person node is on the edge.
+_USER_ONLY_RELATIONS = {"USES_SKILL"}
 
 
 def _edge_relation(graph: nx.DiGraph, a: str, b: str) -> str:
@@ -80,7 +84,10 @@ def classify_node_layers(
             for neighbor in neighbors:
                 if layers.get(neighbor) != CAREER_LAYER:
                     continue
-                if _edge_relation(graph, neighbor, node_id) in _OWNERSHIP_RELATIONS:
+                relation = _edge_relation(graph, neighbor, node_id)
+                if relation in _OWNERSHIP_RELATIONS or (
+                    relation in _USER_ONLY_RELATIONS and neighbor in user_ids
+                ):
                     layers[node_id] = CAREER_LAYER
                     changed = True
                     break
