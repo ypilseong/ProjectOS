@@ -54,7 +54,7 @@ def test_paper_topic_skill_stays_knowledge():
     assert graph.nodes["Skill:LLM"]["layer"] == KNOWLEDGE_LAYER
 
 
-def test_user_owned_project_promotes_its_skill():
+def test_user_owned_project_does_not_promote_skill_via_uses_skill():
     graph = nx.DiGraph()
     graph.add_node("Person:Yang", type="Person", name="Yang", source_files=["cv.pdf"])
     graph.add_node("Project:ProjectOS", type="Project", name="ProjectOS", source_files=["report.pdf"])
@@ -121,7 +121,7 @@ def test_uses_skill_from_user_person_promotes_to_career():
     graph.add_edge(USER_PERSON_ID, "Skill:Python", relation="USES_SKILL")
 
     with patch("app.utils.graph_restructure.load_user_config", return_value=_USER_CONFIG_STUB):
-        classify_node_layers(graph, {})
+        graph, _ = classify_node_layers(graph, {})
 
     assert graph.nodes["Skill:Python"]["layer"] == "career"
 
@@ -142,7 +142,7 @@ def test_uses_skill_from_career_project_stays_knowledge():
     graph.add_edge("Project:MyProj", "Skill:CIB", relation="USES_SKILL")
 
     with patch("app.utils.graph_restructure.load_user_config", return_value=_USER_CONFIG_STUB):
-        classify_node_layers(graph, {})
+        graph, _ = classify_node_layers(graph, {})
 
     assert graph.nodes["Project:MyProj"]["layer"] == "career"
     assert graph.nodes["Skill:CIB"]["layer"] == "knowledge"
