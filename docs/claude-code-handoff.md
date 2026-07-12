@@ -1,6 +1,6 @@
 # Claude Code Handoff
 
-Last updated: 2026-06-19
+Last updated: 2026-07-12
 
 This is the compact handoff. The previous file had grown into a long chronological log; detailed history remains in git commits and the superseded diff. Use this document as the current working snapshot for the next ProjectOS session.
 
@@ -15,6 +15,23 @@ This is the compact handoff. The previous file had grown into a long chronologic
 - Graph/simulation quality work is partially implemented from `docs/superpowers/specs/2026-06-10-graph-simulation-quality-assessment.md`.
 
 ## Implemented Recently
+
+### Graph Quality Guards + Simulation Delta Review Flow (2026-07-12)
+
+Six targeted quality improvements shipped on branch `graph-simulation-quality` (commits 77c40cf..89b5aea):
+
+1. **Evidence ref resolution** — `_resolve_ref` in `app/services/simulation_context.py` now resolves bare `"Type:Name"` refs and wrong-type prefixes via unique-name fallback. `EVIDENCE_REF_RULE` constant enforces structured refs (`타입:이름` / `chunk:파일명#청크ID`) in both debate and synthesis prompts.
+2. **Delta draft validation** — new `app/utils/graph_delta_validation.py`: fuzzy/acronym duplicate detection annotates `duplicate_of` (e.g. `"Cross-Impact Balance (CIB)"` vs existing `"Cross-Impact Balance"` is auto-skipped, edges remapped); relation whitelist normalizes off-schema relations to `RELATED_TO` preserving `relation_raw`; synthesis prompt now names all 10 allowed relations.
+3. **Delta review flow** — new `app/services/simulation_delta.py` + `POST /api/projects/{id}/simulation/delta/apply|reject` endpoints + 승인/거부 buttons with 3-state status tags in `SimulationPanel.vue` delta cards. Applied deltas refresh layers via `classify_node_layers` and persist to both `simulation.json` and the archived simulation file.
+4. **Merge candidate guards** — `collect_merge_candidates`: threshold raised to `MERGE_REVIEW_STRICT_THRESHOLD = 0.93`; names shorter than 4 chars require an acronym match. Eliminates AI↔AMI, cpWER↔cpCER, simulation↔estimation false positives while keeping containment and punctuation-variant pairs.
+5. **Debate aggregation** — synthesis prompt emits `debate_synthesis` block; `_build_debate` merges synthesis agreements/disagreements/unresolved with turn-level question rollup (capped at 20).
+6. **Career layer fix** — `USES_SKILL` propagates the `career` layer only from the user `Person` node (new `_USER_ONLY_RELATIONS`), fixing the 108/168-skill career flooding problem.
+
+Verification (2026-07-12):
+- `cd src/backend && python3 -m pytest tests/ -q` → **563 passed**, 100 warnings
+- `cd src/frontend && npx vitest run` → **11 passed** (2 test files)
+- `cd src/frontend && npm run build` → **success** (chunk-size advisory only)
+- Smoke test (service layer, no server): `reject_simulation_delta("21fc2ce5", "delta_node_002", reason="기존 Skill:Cross-Impact Balance와 중복")` → `delta.status: rejected`; verified `projects/21fc2ce5/simulation.json` and `projects/21fc2ce5/simulations/sim_20260628_152220_230888.json` both updated.
 
 ### Merge Candidate Review UI (2026-06-19)
 
@@ -151,23 +168,28 @@ This is the compact handoff. The previous file had grown into a long chronologic
 
 - The 06-10/06-11 update set is committed (2026-06-19) along directory boundaries and pushed. The branch was renamed `hybrid-retrieval` -> `graph-simulation-quality`; it contains all of `main` plus the simulation/clip/MCP-quality work and can fast-forward `main`.
 - `docs/claude-desktop-mcp.md` and the MCP exposed tool list should be rechecked together before commit, because hidden-vs-exposed tool behavior is intentional.
-- Frontend browser behavior is build-tested but not visually verified in this environment. This now includes the new "병합 검토" tab — apply/reject flows are covered by backend tests but the UI itself was not exercised in a browser here.
-- Layer labels (`career`/`publication`/`knowledge`) are produced, but downstream ranking and simulation context can still be improved to prefer `career` explicitly.
+- Frontend browser behavior is build-tested but not visually verified in this environment. This includes the simulation delta 승인/거부 buttons and the "병합 검토" tab — backend tests cover the logic but the UI was not exercised in a browser here.
+- Layer labels (`career`/`publication`/`knowledge`) are produced and career flooding is fixed (USES_SKILL now career-propagates only from the user Person node). Downstream ranking and simulation context preferring `career` explicitly is still open.
+- ~~Merge candidate false positives~~ — **resolved**: strict threshold (0.93) + short-name acronym guard eliminates AI↔AMI, cpWER↔cpCER, simulation↔estimation and similar false positives.
 - The quality assessment's broader Skill subtype cleanup remains open: `Skill` still mixes concrete skills, methods, tools, models, benchmarks, and research topics.
 - Initial graph quality is structurally sound but semantically noisy; skill/category hub overuse and duplicate vault pages are the main cleanup targets.
 - MCP/Claude Desktop connectivity should be verified with real Claude Desktop traffic by checking that `logs/mcp-stdio.jsonl` and `logs/mcp.jsonl` are created.
+- Delta bulk-approve UI and rejected-delta undo flow are not yet implemented.
 
 ## Recommended Next Work
 
-1. Run a clean full verification pass from repo root:
+1. **Evidence ref 해석률 실측** — 다음 시뮬레이션 실행에서 bare 노드 ref (e.g. `"Skill:BLEU"`)가 전부 해석되는지 확인. `_resolve_ref`의 unique-name fallback이 실제 운영 데이터에서 얼마나 커버하는지 측정.
+2. **`ISOLATED_REEXTRACT_ENABLED=true` 재실행 품질 점검** — 타임아웃 문제 수정 후 project `21fc2ce5`를 full pipeline으로 재빌드해 isolated-node 재추출 효과 확인.
+3. **Delta 일괄 승인 UI 및 rejected delta 되돌리기 검토** — 현재는 개별 승인/거부만 가능. bulk-apply 버튼과 rejected → proposed 복원 경로 추가 검토.
+4. Run a clean full verification pass from repo root:
    - `cd src/backend && pytest tests/ -q`
    - `cd src/frontend && npm test && npm run build`
    - `cd src/obsidian-plugin && npm run build`
-2. Validate Claude Desktop connection against port `14006` and confirm MCP JSONL logs are created.
-3. Visually verify the new "병합 검토" tab in a browser (approve/reject round-trips), and consider an undo UI to clear entries from `merge_denylist.json`.
-4. Make simulation/query context prefer `career` layer nodes before `publication`/`knowledge`.
-5. Decide whether to introduce `ResearchTopic`/`Method`/`Tool` subtypes or stricter Skill promotion rules.
-7. Fix isolated-node re-extraction timeout behavior, then rerun project `21fc2ce5` with `ISOLATED_REEXTRACT_ENABLED=true` for a stricter quality check.
+5. Validate Claude Desktop connection against port `14006` and confirm MCP JSONL logs are created.
+6. Visually verify simulation delta 승인/거부 and "병합 검토" tab in a browser; consider an undo UI to clear entries from `merge_denylist.json`.
+7. Make simulation/query context prefer `career` layer nodes before `publication`/`knowledge`.
+8. Decide whether to introduce `ResearchTopic`/`Method`/`Tool` subtypes or stricter Skill promotion rules.
+9. Fix isolated-node re-extraction timeout behavior, then rerun project `21fc2ce5` with `ISOLATED_REEXTRACT_ENABLED=true` for a stricter quality check.
 
 ## Files To Inspect First
 
