@@ -5,6 +5,11 @@ from app.utils.user_config import get_user_name_variants, load_user_config
 
 logger = get_logger(__name__)
 
+
+def is_meta_node(data: dict) -> bool:
+    """True for provenance/meta nodes that must be excluded from career-graph logic."""
+    return bool(data.get("meta")) or data.get("type") in {"Category", "Capture"}
+
 # Maps individual node type → (hub node id, hub display name)
 _HUB_CONFIG: dict[str, tuple[str, str]] = {
     "Achievement":  ("Category:Achievements",  "Achievements"),
@@ -49,6 +54,10 @@ _KNOWN_SKILL_MENTIONS = (
     "FastAPI",
 )
 
+_PAPER_FILE_TYPES = {"paper", "publication", "research_paper", "article"}
+_PROFILE_FILE_TYPES = {"cv", "resume", "curriculum_vitae", "profile"}
+_PAPER_SOURCE_HINTS = ("arxiv", "aclanthology", "paper", "publication")
+
 
 def _load_user_person_ids(graph: nx.DiGraph) -> set[str]:
     """Return node IDs that belong to the user (matched via user.json name variants)."""
@@ -79,6 +88,136 @@ def _node_sources(graph: nx.DiGraph, node_id: str) -> dict:
         "source_files": list(data.get("source_files", [])),
         "source_chunk_ids": list(data.get("source_chunk_ids", [])),
     }
+
+
+def _source_types_for_node(data: dict, source_file_types: dict[str, str] | None) -> set[str]:
+    if not source_file_types:
+        return set()
+    return {
+        str(source_file_types.get(source, "")).strip().lower().replace("-", "_").replace(" ", "_")
+        for source in data.get("source_files", [])
+        if source_file_types.get(source)
+    }
+
+
+def _has_profile_source(data: dict, source_file_types: dict[str, str] | None) -> bool:
+    source_types = _source_types_for_node(data, source_file_types)
+    if source_types & _PROFILE_FILE_TYPES:
+        return True
+    source_names = " ".join(str(source).lower() for source in data.get("source_files", []))
+    return any(token in source_names for token in ("resume", "cv", "자소서", "면접"))
+
+
+def _has_paper_source(data: dict, source_file_types: dict[str, str] | None) -> bool:
+    source_types = _source_types_for_node(data, source_file_types)
+    if source_types & _PAPER_FILE_TYPES:
+        return True
+    source_names = " ".join(str(source).lower() for source in data.get("source_files", []))
+    return any(token in source_names for token in _PAPER_SOURCE_HINTS)
+
+
+def _append_paper_author(graph: nx.DiGraph, publication_id: str, person_id: str) -> None:
+    publication = graph.nodes[publication_id]
+    person = graph.nodes[person_id]
+    author = {
+        "name": person.get("name", person_id),
+        "source_files": list(person.get("source_files", [])),
+        "source_chunk_ids": list(person.get("source_chunk_ids", [])),
+    }
+    authors = list(publication.get("paper_authors", []))
+    existing_names = {str(item.get("name", "")).lower() for item in authors}
+    if str(author["name"]).lower() not in existing_names:
+        authors.append(author)
+    publication["paper_authors"] = authors
+
+
+def _remove_author_detail_item(graph: nx.DiGraph, publication_id: str, author_name: str) -> None:
+    details = graph.nodes[publication_id].get("details") or {}
+    sections = details.get("sections") or []
+    next_sections = []
+    lowered = author_name.lower()
+    for section in sections:
+        if section.get("title") != "저자":
+            next_sections.append(section)
+            continue
+        items = [
+            item for item in section.get("items", [])
+            if lowered not in str(item).lower()
+        ]
+        if items:
+            next_section = dict(section)
+            next_section["items"] = items
+            next_sections.append(next_section)
+    if sections != next_sections:
+        next_details = dict(details)
+        next_details["sections"] = next_sections
+        graph.nodes[publication_id]["details"] = next_details
+
+
+def cleanup_paper_author_person_nodes(
+    graph: nx.DiGraph,
+    source_file_types: dict[str, str] | None = None,
+) -> tuple[nx.DiGraph, int]:
+    """Remove paper-only author Person nodes and preserve names on Publication nodes.
+
+    Publication authors are useful metadata, but external paper authors should not
+    become career graph Person nodes unless they already have non-paper profile
+    evidence. This keeps graph visualization focused while retaining author lists
+    inside generated Publication markdown.
+    """
+    user_ids = _load_user_person_ids(graph)
+    removed = 0
+
+    for person_id, data in list(graph.nodes(data=True)):
+        if data.get("type") != "Person" or person_id in user_ids:
+            continue
+        if _has_profile_source(data, source_file_types):
+            continue
+
+        authored_publications: set[str] = set()
+        for target_id in graph.successors(person_id):
+            if (
+                graph.nodes[target_id].get("type") == "Publication"
+                and str(graph.edges[person_id, target_id].get("relation", "")).upper() == "AUTHORED"
+            ):
+                authored_publications.add(target_id)
+        for source_id in graph.predecessors(person_id):
+            if (
+                graph.nodes[source_id].get("type") == "Publication"
+                and str(graph.edges[source_id, person_id].get("relation", "")).upper() == "AUTHORED"
+            ):
+                authored_publications.add(source_id)
+
+        if not authored_publications:
+            continue
+        if not _has_paper_source(data, source_file_types):
+            # Graphs built before file-type propagation still often have only
+            # report/PDF source names. Keep the author only if there is no paper
+            # signal at all.
+            source_names = " ".join(str(source).lower() for source in data.get("source_files", []))
+            if ".pdf" not in source_names:
+                continue
+
+        for publication_id in authored_publications:
+            _append_paper_author(graph, publication_id, person_id)
+            _remove_author_detail_item(graph, publication_id, data.get("name", person_id))
+        graph.remove_node(person_id)
+        removed += 1
+
+    for publication_id, data in list(graph.nodes(data=True)):
+        if data.get("type") != "Publication":
+            continue
+        for author in data.get("paper_authors", []):
+            if isinstance(author, dict):
+                author_name = str(author.get("name", ""))
+            else:
+                author_name = str(author)
+            if author_name:
+                _remove_author_detail_item(graph, publication_id, author_name)
+
+    if removed:
+        logger.info(f"Paper author cleanup: removed {removed} Person node(s)")
+    return graph, removed
 
 
 def _looks_like_project_context(name: str) -> bool:

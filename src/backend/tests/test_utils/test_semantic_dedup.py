@@ -82,6 +82,37 @@ def test_merge_node_does_not_duplicate_existing_edge():
     assert len(list(g.predecessors("Skill:NLP"))) == 1
 
 
+def test_merge_node_preserves_dup_name_as_alias():
+    g = nx.DiGraph()
+    g.add_node("Skill:NLP", type="Skill", name="NLP", source_files=[])
+    g.add_node("Skill:자연어처리", type="Skill", name="자연어처리", source_files=[])
+
+    _merge_node(g, "Skill:NLP", "Skill:자연어처리")
+
+    # The merged-away surface form must survive as an alias for search/lookup.
+    assert "자연어처리" in g.nodes["Skill:NLP"]["aliases"]
+    # The canonical name itself is never stored as its own alias.
+    assert "NLP" not in g.nodes["Skill:NLP"]["aliases"]
+
+
+def test_merge_node_inherits_dup_existing_aliases():
+    g = nx.DiGraph()
+    g.add_node("Skill:NLP", type="Skill", name="NLP", source_files=[], aliases=["nlp"])
+    g.add_node(
+        "Skill:자연어처리",
+        type="Skill",
+        name="자연어처리",
+        source_files=[],
+        aliases=["natural language processing"],
+    )
+
+    _merge_node(g, "Skill:NLP", "Skill:자연어처리")
+
+    aliases = set(g.nodes["Skill:NLP"]["aliases"])
+    # Both the dup's name and its prior aliases roll up; canonical's own aliases stay.
+    assert {"자연어처리", "natural language processing", "nlp"} <= aliases
+
+
 # ---------------------------------------------------------------------------
 # semantic_dedup integration tests (embedding client mocked)
 # ---------------------------------------------------------------------------

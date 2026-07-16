@@ -1,6 +1,6 @@
 # Backend — ProjectOS
 
-FastAPI 백엔드. 6개 에이전트 파이프라인 + 4개 API 라우터.
+FastAPI 백엔드. 9개 에이전트 + 10개 API 라우터.
 
 ## 명령어
 
@@ -24,11 +24,11 @@ python3 -m pytest tests/test_agents/test_parser_agent.py -v
 
 ```
 app/
-  agents/     — 6개 에이전트 (parser, ontology, graph_builder, profile, obsidian_writer, query)
-  api/        — 4개 라우터 (projects, graph, chat, tasks)
-  models/     — 데이터 모델 (graph.py, project.py)
-  services/   — TaskManager, ProjectStore (인메모리/파일시스템)
-  utils/      — LLMClient (OpenAI SDK), FileParser (PDF/DOCX/TXT)
+  agents/     — 9개 (parser, ontology, graph_builder, claude_task_graph_builder, profile, obsidian_writer, query, analysis, simulation)
+  api/        — 10개 라우터 (api/CLAUDE.md 참고)
+  models/     — 데이터 모델 (graph.py, project.py, vault.py)
+  services/   — 16개 (project_store, task_manager, retrieval_index, graph_context, capture_context, digest, watcher 등)
+  utils/      — 25개 (llm_client, file_parser, embedding_client, hybrid_retrieval, entity_*, graph_* 등)
   config.py   — pydantic_settings BaseSettings 싱글톤
   main.py     — FastAPI 앱, CORS, 라우터 등록
 ```

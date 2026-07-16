@@ -37,6 +37,7 @@ Extraction rules:
 - Prefer expanded labels over acronyms when both appear.
 - Keep graph nodes to independent primary entities. Do not create entities for project features, outputs, or implementation phrases such as "graph JSON generation", "Obsidian export", "user-centered visualization", "FastAPI backend architecture", or "Vue/D3 frontend implementation".
 - When such a phrase contains a real skill/tool, extract only the skill/tool as a Skill and connect the Project to it with USES_SKILL.
+- For paper/publication sources, do not add external paper authors as Person nodes unless they are already represented by an existing profile person in the graph context.
 
 Allowed entity types and relation types are provided in input.json.
 Output must match schema.json.
@@ -93,6 +94,7 @@ class ClaudeTaskGraphBuilderAgent:
         ontology: Ontology,
         file_paths: list[str | Path],
         progress_callback: Callable[[int, int], None] | None = None,
+        project_context: dict | None = None,
     ) -> nx.DiGraph:
         entity_types = []
         for entity in ontology.entity_types:
@@ -103,6 +105,7 @@ class ClaudeTaskGraphBuilderAgent:
 
         input_data = {
             "task": "extract_profile_graph",
+            "project_context": project_context or {},
             "source_files": [str(Path(path).resolve()) for path in file_paths],
             "allowed_entity_types": entity_types,
             "allowed_relation_types": edge_types,
@@ -119,6 +122,7 @@ class ClaudeTaskGraphBuilderAgent:
         prompt = (
             "Read input.json. Inspect the source_files listed there as needed. "
             "Extract entities and relations for a profile knowledge graph. "
+            "Use project_context to prioritize grounded entities and relations. "
             "Return JSON only with top-level entities and relations arrays."
         )
         result = await self._runner.run_task(
@@ -132,11 +136,16 @@ class ClaudeTaskGraphBuilderAgent:
 
         graph = nx.DiGraph()
         source_file = ",".join(sorted({chunk.source_file for chunk in chunks})) or "claude_task"
+        synthetic_file_type = (
+            "paper"
+            if chunks and all(GraphBuilderAgent._is_paper_chunk(chunk) for chunk in chunks)
+            else "claude_task"
+        )
         synthetic_chunk = TextChunk(
             chunk_id="claude_task_graph_extraction",
             text=json.dumps(result, ensure_ascii=False)[:4000],
             source_file=source_file,
-            file_type="claude_task",
+            file_type=synthetic_file_type,
             page_num=None,
             char_offset=0,
         )

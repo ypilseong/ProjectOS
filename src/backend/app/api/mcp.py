@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from app.mcp_tools import call_mcp_tool, list_mcp_tools
+from app.utils.mcp_logging import record_mcp_exchange
 
 router = APIRouter()
 
@@ -23,6 +24,7 @@ async def list_tools_http():
 
 @router.post("")
 async def mcp_json_rpc(message: dict):
+    record_mcp_exchange(source="backend", direction="request", payload=message)
     request_id = message.get("id")
     method = message.get("method")
     params = message.get("params") or {}
@@ -31,7 +33,7 @@ async def mcp_json_rpc(message: dict):
         return Response(status_code=202)
 
     if method == "initialize":
-        return _response(
+        response = _response(
             request_id,
             {
                 "protocolVersion": PROTOCOL_VERSION,
@@ -39,18 +41,30 @@ async def mcp_json_rpc(message: dict):
                 "serverInfo": {"name": "projectos", "version": "0.1.0"},
             },
         )
+        record_mcp_exchange(source="backend", direction="response", payload=response)
+        return response
 
     if method == "tools/list":
-        return _response(request_id, {"tools": list_mcp_tools()})
+        response = _response(request_id, {"tools": list_mcp_tools()})
+        record_mcp_exchange(source="backend", direction="response", payload=response)
+        return response
 
     if method == "tools/call":
         name = params.get("name")
         if not name:
-            return _error(request_id, -32602, "params.name is required")
+            response = _error(request_id, -32602, "params.name is required")
+            record_mcp_exchange(source="backend", direction="response", payload=response)
+            return response
         result = await call_mcp_tool(name, params.get("arguments") or {})
-        return _response(request_id, result)
+        response = _response(request_id, result)
+        record_mcp_exchange(source="backend", direction="response", payload=response)
+        return response
 
     if method == "ping":
-        return _response(request_id, {})
+        response = _response(request_id, {})
+        record_mcp_exchange(source="backend", direction="response", payload=response)
+        return response
 
-    return _error(request_id, -32601, f"Method not found: {method}")
+    response = _error(request_id, -32601, f"Method not found: {method}")
+    record_mcp_exchange(source="backend", direction="response", payload=response)
+    return response

@@ -23,16 +23,20 @@
           {{ getFileExt(f.name).toUpperCase() }}
         </el-tag>
         <span class="file-name">{{ f.name }}</span>
-        <el-tag size="small" type="info">{{ fileTypeLabel }}</el-tag>
+        <el-select
+          v-model="fileTypes[f.name]"
+          placeholder="파일 유형"
+          size="small"
+          style="width: 150px"
+        >
+          <el-option label="이력서 (CV)" value="cv" />
+          <el-option label="논문" value="paper" />
+          <el-option label="보고서" value="report" />
+          <el-option label="메모" value="memo" />
+          <el-option label="노트" value="note" />
+        </el-select>
       </div>
     </div>
-
-    <el-select v-model="selectedFileType" placeholder="파일 유형 선택" class="mt-2" style="width: 200px">
-      <el-option label="이력서 (CV)" value="cv" />
-      <el-option label="프로젝트 문서" value="project" />
-      <el-option label="논문/출판물" value="publication" />
-      <el-option label="기타 노트" value="note" />
-    </el-select>
 
     <el-button
       type="primary"
@@ -47,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { projectsApi } from '../api/client.js'
 
 const props = defineProps({
@@ -56,17 +60,24 @@ const props = defineProps({
 const emit = defineEmits(['uploaded'])
 
 const fileList = ref([])
-const selectedFileType = ref('cv')
+const fileTypes = ref({})
 
-const fileTypeLabel = computed(() => ({
-  cv: '이력서',
-  project: '프로젝트',
-  publication: '논문',
-  note: '노트'
-})[selectedFileType.value])
+function inferFileType(name) {
+  const lower = name.toLowerCase()
+  if (lower.includes('cv') || lower.includes('resume')) return 'cv'
+  if (lower.includes('paper') || lower.includes('publication')) return 'paper'
+  if (lower.includes('report')) return 'report'
+  if (lower.includes('memo') || lower.includes('note')) return 'memo'
+  return 'note'
+}
 
 function onFileChange(file, files) {
   fileList.value = files
+  const nextTypes = {}
+  files.forEach(f => {
+    nextTypes[f.name] = fileTypes.value[f.name] || inferFileType(f.name)
+  })
+  fileTypes.value = nextTypes
 }
 
 function getFileExt(name) {
@@ -81,10 +92,12 @@ function getFileTagType(name) {
 async function upload() {
   const formData = new FormData()
   fileList.value.forEach(f => formData.append('files', f.raw))
-  formData.append('file_type', selectedFileType.value)
+  formData.append('file_type', 'note')
+  formData.append('file_types', JSON.stringify(fileTypes.value))
   const r = await projectsApi.uploadFiles(props.projectId, formData)
   emit('uploaded', r.data.task_id)
   fileList.value = []
+  fileTypes.value = {}
 }
 </script>
 

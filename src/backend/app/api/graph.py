@@ -6,6 +6,7 @@ from pathlib import Path
 
 import networkx as nx
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 
 from app.config import config
@@ -17,6 +18,10 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+class MergeCandidateAction(BaseModel):
+    keep_id: str
+    candidate_id: str
 
 global_router = APIRouter()
 
@@ -116,6 +121,29 @@ async def get_ontology(project_id: str):
     return dataclasses.asdict(normalize_ontology_types(ontology))
 
 
+@router.get("/{project_id}/ontology/context")
+async def get_ontology_context(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    from app.services.ontology_context import build_context_payload
+
+    return build_context_payload(project)
+
+
+@router.post("/{project_id}/ontology/context")
+async def save_ontology_context(project_id: str, body: dict):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    from app.services.ontology_context import save_context
+
+    try:
+        return save_context(project, body.get("answers") or body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/{project_id}/graph")
 async def run_graph(project_id: str):
     project = project_store.get(project_id)
@@ -190,6 +218,120 @@ async def get_graph_health(project_id: str):
     return run_health_check(graph, vault_path=str(Path(config.VAULT_DIR) / project_id))
 
 
+@router.post("/{project_id}/graph/cleanup")
+async def cleanup_graph(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    proj_dir = Path(config.PROJECTS_DIR) / project_id
+    graph_path = proj_dir / "graph.json"
+    if not graph_path.exists():
+        raise HTTPException(status_code=404, detail="Graph not built yet")
+
+    from app.agents.graph_builder_agent import GraphBuilderAgent
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+    from app.models.graph import TextChunk
+    from app.utils.graph_restructure import cleanup_paper_author_person_nodes
+
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    source_file_types: dict[str, str] = {}
+    chunks_path = proj_dir / "chunks.json"
+    if chunks_path.exists():
+        chunks = [
+            TextChunk(**chunk)
+            for chunk in json.loads(chunks_path.read_text(encoding="utf-8"))
+        ]
+        source_file_types = {chunk.source_file: chunk.file_type for chunk in chunks}
+
+    graph, removed = cleanup_paper_author_person_nodes(graph, source_file_types)
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    graph_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    stats = GraphBuilderAgent().get_stats(graph)
+    project.stats = dataclasses.asdict(stats)
+    project_store.save(project)
+    ObsidianWriterAgent().run(
+        graph,
+        vault_path=str(Path(config.VAULT_DIR) / project_id),
+        delta=False,
+        project_id=project_id,
+    )
+    return {"removed_person_nodes": removed, "stats": dataclasses.asdict(stats)}
+
+
+@router.post("/{project_id}/graph/merge-candidates/apply")
+async def apply_merge_candidate(project_id: str, body: MergeCandidateAction):
+    from app.utils.merge_denylist import load_denylist
+    from app.utils.merge_review import collect_merge_candidates
+    from app.utils.semantic_dedup import _merge_node
+
+    if body.keep_id == body.candidate_id:
+        raise HTTPException(400, "keep_id and candidate_id must be different nodes")
+
+    p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    if not p.exists():
+        raise HTTPException(404, "Graph not built yet")
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    if body.keep_id not in graph or body.candidate_id not in graph:
+        raise HTTPException(409, "Candidate is stale; node no longer exists")
+
+    _merge_node(graph, body.keep_id, body.candidate_id)
+
+    merge_candidates = collect_merge_candidates(
+        graph, denylist=load_denylist(project_id)
+    )
+    graph.graph["merge_candidates"] = merge_candidates
+
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    p.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {"merged": True, "merge_candidates": merge_candidates}
+
+
+@router.post("/{project_id}/graph/merge-candidates/reject")
+async def reject_merge_candidate(project_id: str, body: MergeCandidateAction):
+    from app.utils.merge_denylist import add_denied_pair
+
+    p = Path(config.PROJECTS_DIR) / project_id / "graph.json"
+    if not p.exists():
+        raise HTTPException(404, "Graph not built yet")
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if "links" in data and "edges" not in data:
+        data["edges"] = data.pop("links")
+    graph = nx.node_link_graph(data)
+
+    add_denied_pair(project_id, body.keep_id, body.candidate_id)
+
+    rejected_pair = frozenset({body.keep_id, body.candidate_id})
+    merge_candidates = [
+        c
+        for c in graph.graph.get("merge_candidates", [])
+        if frozenset({c["keep_id"], c["candidate_id"]}) != rejected_pair
+    ]
+    graph.graph["merge_candidates"] = merge_candidates
+
+    out = nx.node_link_data(graph)
+    if "edges" in out and "links" not in out:
+        out["links"] = out.pop("edges")
+    p.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {"rejected": True, "merge_candidates": merge_candidates}
+
+
 @router.get("/{project_id}/traces")
 async def get_traces(project_id: str):
     from app.utils.trace import read_traces
@@ -210,9 +352,14 @@ async def _run_ontology(task_id: str, project_id: str):
             raise ValueError("chunks.json not found — upload files first")
         chunks_data = json.loads(chunks_path.read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
+        project = project_store.get(project_id)
+        if not project:
+            raise ValueError("Project not found")
+        from app.services.ontology_context import build_prompt_context
+        ontology_context = build_prompt_context(project)
         agent = OntologyAgent()
         task_manager.update(task_id, progress=30, message="LLM 온톨로지 생성 중... (1/1)")
-        ontology = await agent.run(chunks)
+        ontology = await agent.run(chunks, project_context=ontology_context)
         out = Path(config.PROJECTS_DIR) / project_id / "ontology.json"
         out.write_text(
             json.dumps(dataclasses.asdict(ontology), indent=2, ensure_ascii=False),
@@ -251,6 +398,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         proj_dir = Path(config.PROJECTS_DIR) / project_id
         chunks_data = json.loads((proj_dir / "chunks.json").read_text(encoding="utf-8"))
         chunks = [TextChunk(**c) for c in chunks_data]
+        source_file_types = {chunk.source_file: chunk.file_type for chunk in chunks}
         ont_data = json.loads((proj_dir / "ontology.json").read_text(encoding="utf-8"))
         ontology = Ontology(
             entity_types=[EntityTypeDef(**e) for e in ont_data["entity_types"]],
@@ -298,7 +446,14 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 task_manager.update(task_id, message=f"증분 처리: {skipped}청크 스킵, {len(chunks)}청크 재처리", progress=25)
         # --- End hash tracking ---
 
+        project = project_store.get(project_id)
+        if not project:
+            raise ValueError("Project not found")
         graph_path = str(proj_dir / "graph.json")
+        from app.services.capture_context import attach_capture_nodes, load_captures
+        captures = load_captures(project_id)
+        from app.services.ontology_context import build_prompt_context
+        ontology_context = build_prompt_context(project)
         if config.GRAPH_BUILD_MODE == "claude_task":
             from app.agents.claude_task_graph_builder_agent import ClaudeTaskGraphBuilderAgent
             graph_agent = ClaudeTaskGraphBuilderAgent()
@@ -330,6 +485,7 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 ontology,
                 file_paths=file_paths,
                 progress_callback=on_chunk_progress,
+                project_context=ontology_context,
             )
         else:
             graph = await graph_agent.run(
@@ -338,6 +494,8 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                 incremental=incremental,
                 graph_path=graph_path,
                 progress_callback=on_chunk_progress,
+                capture_context=captures,
+                project_context=ontology_context,
             )
 
         task_manager.update(task_id, message="의미 중복 노드 병합 중...", progress=71)
@@ -370,9 +528,15 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         if achievement_refined:
             logger.info(f"Achievement refinement: changed {achievement_refined} node(s)")
 
+        task_manager.update(task_id, message="논문 저자 노드 정리 중...", progress=74)
+        from app.utils.graph_restructure import cleanup_paper_author_person_nodes
+        graph, paper_authors_removed = cleanup_paper_author_person_nodes(graph, source_file_types)
+        if paper_authors_removed:
+            logger.info(f"Paper author cleanup: removed {paper_authors_removed} node(s)")
+
         from app.utils.isolated_reextract import reextract_isolated_nodes
         isolated_before = sum(1 for n in graph.nodes if graph.degree(n) == 0)
-        if isolated_before:
+        if isolated_before and config.ISOLATED_REEXTRACT_ENABLED:
             task_manager.update(
                 task_id,
                 message=f"고립 노드 재추출 중... (0/{isolated_before})",
@@ -399,15 +563,34 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
                     "Post re-extraction LLM dedup: "
                     f"merged {post_reextract_llm_merged} node(s)"
                 )
+        elif isolated_before:
+            logger.info(
+                "Isolated re-extraction skipped: "
+                f"{isolated_before} isolated node(s), ISOLATED_REEXTRACT_ENABLED=false"
+            )
 
         from app.utils.graph_restructure import (
             add_category_hubs,
             build_entity_details,
+            cleanup_paper_author_person_nodes,
             demote_project_context_nodes,
         )
+        graph, post_reextract_paper_authors_removed = cleanup_paper_author_person_nodes(
+            graph,
+            source_file_types,
+        )
+        if post_reextract_paper_authors_removed:
+            logger.info(
+                "Post re-extraction paper author cleanup: "
+                f"removed {post_reextract_paper_authors_removed} node(s)"
+            )
         graph, context_demoted = demote_project_context_nodes(graph)
         if context_demoted:
             logger.info(f"Project context nodes demoted: {context_demoted}")
+        from app.utils.graph_promotion import classify_node_layers
+        graph, layer_counts = classify_node_layers(graph, source_file_types)
+        if layer_counts:
+            logger.info(f"Node layers classified: {layer_counts}")
         graph, hubs_added = add_category_hubs(graph)
         if hubs_added:
             logger.info(f"Category hubs added: {hubs_added}")
@@ -415,8 +598,29 @@ async def _run_graph(task_id: str, project_id: str, incremental: bool, trigger: 
         if details_added:
             logger.info(f"Entity details generated: {details_added}")
 
+        if captures:
+            capture_added = attach_capture_nodes(graph, captures)
+            if capture_added:
+                logger.info(f"Capture meta nodes attached: {capture_added}")
+
+        from app.utils.merge_denylist import load_denylist
+        from app.utils.merge_review import collect_merge_candidates
+        merge_candidates = collect_merge_candidates(
+            graph, denylist=load_denylist(project_id)
+        )
+        graph.graph["merge_candidates"] = merge_candidates
+        if merge_candidates:
+            logger.info(f"Merge review candidates: {len(merge_candidates)}")
+
         graph_agent.save(graph, graph_path)
         hash_store.save()
+
+        try:
+            from app.services.retrieval_index import build_node_index, build_chunk_index
+            await build_node_index(project_id)
+            await build_chunk_index(project_id)
+        except Exception as e:
+            logger.warning(f"retrieval index build skipped: {e}")
 
         total_nodes = graph.number_of_nodes()
         writable_nodes = sum(

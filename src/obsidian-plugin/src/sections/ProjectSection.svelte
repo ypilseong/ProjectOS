@@ -1,15 +1,12 @@
 <script lang="ts">
   import Card from "../ui/Card.svelte";
   import Button from "../ui/Button.svelte";
-  import Disclosure from "../ui/Disclosure.svelte";
   import type { AppStore } from "../store/appStore.svelte";
 
   let { store }: { store: AppStore } = $props();
-  const initialProjectName = () => store.plugin.settings.projectName;
-  let newName = $state(initialProjectName());
 </script>
 
-<Card title="Project" subtitle="Select a backend project.">
+<Card title="Project" subtitle="Choose a built ProjectOS project.">
   <select
     class="pos-input"
     value={store.projectId}
@@ -17,38 +14,23 @@
   >
     <option value="">Select project</option>
     {#each store.projects as project}
-      <option value={project.project_id}>{project.name} ({project.project_id})</option>
+      <option value={project.project_id}>
+        {project.name} ({project.project_id})
+      </option>
     {/each}
   </select>
 
-  <Disclosure label="Project management">
-    <input class="pos-input" type="text" placeholder="New project name" bind:value={newName} />
-    <div class="pos-actions">
-      <Button onclick={() => store.refreshProjects()}>Refresh</Button>
-      <Button variant="primary" onclick={() => store.createProject(newName)}>Create project</Button>
+  <div class="pos-actions">
+    <Button onclick={() => store.refreshProjects()}>Refresh projects</Button>
+  </div>
+
+  {#if store.projectId}
+    <div class="pos-project-summary">
+      <span>Selected</span>
+      <strong>{store.plugin.settings.projectName || store.projectId}</strong>
+      <code>{store.projectId}</code>
     </div>
-    <div class="pos-project-list">
-      {#if !store.projects.length}
-        <div class="pos-empty">No backend projects found.</div>
-      {/if}
-      {#each store.projects as project}
-        <div
-          class="pos-project-item"
-          class:is-selected={project.project_id === store.projectId}
-        >
-          <button class="pos-project-select" onclick={() => store.selectProject(project.project_id)}>
-            <div class="pos-project-main">
-              <strong>{project.name}</strong>
-              {#if project.description}<span>{project.description}</span>{/if}
-            </div>
-            <div class="pos-project-meta">
-              <span>{project.status ?? "unknown"}</span>
-              <code>{project.project_id}</code>
-            </div>
-          </button>
-          <Button variant="danger" onclick={() => store.deleteProject(project.project_id)}>Delete</Button>
-        </div>
-      {/each}
-    </div>
-  </Disclosure>
+  {:else if !store.projects.length}
+    <div class="pos-empty">No backend projects found.</div>
+  {/if}
 </Card>

@@ -1,23 +1,16 @@
 # ProjectOS Vault Sync Obsidian Plugin
 
-This plugin connects a local Obsidian vault to a ProjectOS backend.
+Thin Obsidian integration for ProjectOS.
 
-It is the Mac integration layer. A separate native macOS app is not required:
-Obsidian is already the desktop app, and this plugin runs inside Obsidian with
-direct access to the local vault.
+Claude Desktop and ProjectOS MCP handle project creation, ingestion, graph
+builds, review, and simulation. This plugin only pulls a built ProjectOS vault
+export into the local Obsidian vault.
 
 ## Features
 
-- Sync generated ProjectOS vault payloads into the local vault.
-- Create or select ProjectOS backend projects without manually remembering ids.
-- View backend projects directly in the side panel and select one from the visible list.
-- Select backend runtime mode from the side panel or plugin settings:
-  - `Local`: local OpenAI-compatible endpoint
-  - `Hybrid`: local graph extraction with Claude Code maintenance
-  - `Claude Task`: isolated Claude Code graph build flow
-- Upload files to a ProjectOS project and trigger graph build.
-- Ask questions through ProjectOS `QueryAgent` and stream answers in the side panel.
-- Run ProjectOS document analysis and view summary, improvement points, and improved draft.
+- List backend projects.
+- Select one project.
+- Sync the generated vault export into a local Obsidian folder.
 
 ## Build
 
@@ -45,12 +38,14 @@ npm run build
 
 4. In Obsidian, enable Community plugins and turn on `ProjectOS Vault Sync`.
 5. Open plugin settings and set:
-   - Backend base URL: `http://<server-host>:8002`
+   - Backend base URL: `http://localhost:14006`
    - Target folder: optional folder inside the vault, e.g. `ProjectOS`
 
-Project ID does not need to be typed manually. Open the ProjectOS side panel and
-use `Create project` or `Refresh` + project selector. The plugin stores the
-selected backend project id automatically.
+For an SSH server, open this tunnel on the Mac before syncing:
+
+```bash
+ssh -N -L 14006:127.0.0.1:14006 projectos-server
+```
 
 If target folder is empty, each project syncs into:
 
@@ -58,22 +53,9 @@ If target folder is empty, each project syncs into:
 ProjectOS/<project name>/
 ```
 
-That lets multiple ProjectOS projects appear together in Obsidian Graph View
-while keeping generated files separated by project.
-
 ## Backend Requirements
 
 The ProjectOS backend must expose:
 
+- `GET /api/projects`
 - `GET /api/projects/{project_id}/vault/export`
-- `POST /api/projects/{project_id}/files`
-- `POST /api/projects/{project_id}/graph`
-- `GET /api/tasks/{task_id}/stream`
-- `POST /api/projects/{project_id}/chat`
-
-The backend CORS configuration already includes Obsidian origins.
-
-Runtime mode selection uses:
-
-- `GET /api/settings`
-- `POST /api/settings`

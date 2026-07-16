@@ -10,6 +10,10 @@
         >{{ t }}</el-checkbox-button>
       </el-checkbox-group>
       <el-button size="small" @click="resetZoom" class="reset-btn">Reset</el-button>
+      <div v-if="highlightNodeIds.length || highlightLinkIds.length" class="highlight-legend">
+        <span class="highlight-dot"></span>
+        변경/선택 {{ highlightNodeIds.length }} nodes · {{ highlightLinkIds.length }} edges
+      </div>
       <div v-if="projectColors" class="project-legend">
         <span
           v-for="(color, pid) in projectColors"
@@ -77,6 +81,9 @@ const props = defineProps({
   projectColors: { type: Object, default: null },
   projectNames: { type: Object, default: null },
   onProjectNodeClick: { type: Function, default: null },
+  highlightNodeIds: { type: Array, default: () => [] },
+  highlightLinkIds: { type: Array, default: () => [] },
+  dimUnhighlighted: { type: Boolean, default: false },
 })
 
 const svgEl = ref(null)
@@ -120,15 +127,27 @@ const allTypes = computed(() => {
   return [...new Set(props.graphData.nodes.map(n => n.type || 'Unknown'))]
 })
 
+const defaultVisibleTypes = computed(() =>
+  allTypes.value.filter(type => type !== 'Category')
+)
+
 watch(
   () => props.graphData,
   (data) => {
     if (data) {
-      visibleTypes.value = [...allTypes.value]
+      visibleTypes.value = [...defaultVisibleTypes.value]
       draw(data)
     }
   },
   { immediate: true }
+)
+
+watch(
+  () => [props.highlightNodeIds, props.highlightLinkIds, props.dimUnhighlighted],
+  () => {
+    if (props.graphData) draw(props.graphData)
+  },
+  { deep: true }
 )
 
 watch(visibleTypes, () => {
@@ -149,7 +168,7 @@ function draw(data) {
     visibleTypes.value.includes(n.type || 'Unknown')
   )
   const filteredIdSet = new Set(filteredNodes.map(n => n.id))
-  const links = (data.links || []).filter(l => {
+  const links = (data.links || data.edges || []).filter(l => {
     const srcId = typeof l.source === 'object' ? l.source.id : l.source
     const tgtId = typeof l.target === 'object' ? l.target.id : l.target
     return filteredIdSet.has(srcId) && filteredIdSet.has(tgtId)
@@ -162,6 +181,9 @@ function draw(data) {
     source: typeof l.source === 'object' ? l.source.id : l.source,
     target: typeof l.target === 'object' ? l.target.id : l.target,
   }))
+  const highlightNodes = new Set(props.highlightNodeIds || [])
+  const highlightLinks = new Set(props.highlightLinkIds || [])
+  const hasHighlight = highlightNodes.size > 0 || highlightLinks.size > 0
 
   // Pin the most-connected Person node at center
   const centerNodeId = findCenterNodeId(nodes, linksClone)
@@ -199,8 +221,9 @@ function draw(data) {
   const link = g.append('g').selectAll('line')
     .data(linksClone)
     .enter().append('line')
-    .attr('stroke', '#ddd')
-    .attr('stroke-width', 1.5)
+    .attr('stroke', d => isHighlightedLink(d, highlightLinks, highlightNodes) ? '#ff6b35' : '#ddd')
+    .attr('stroke-width', d => isHighlightedLink(d, highlightLinks, highlightNodes) ? 3.5 : 1.5)
+    .attr('opacity', d => props.dimUnhighlighted && hasHighlight && !isHighlightedLink(d, highlightLinks, highlightNodes) ? 0.18 : 1)
     .attr('marker-end', 'url(#arrow)')
 
   const linkLabel = g.append('g').selectAll('text')
@@ -239,14 +262,16 @@ function draw(data) {
   node.append('circle')
     .attr('r', d => d.id === centerNodeId ? 18 : d.type === 'Person' ? 14 : d.type === 'Category' ? 12 : 10)
     .attr('fill', d => getColor(d))
-    .attr('stroke', d => d.id === centerNodeId ? '#FFD700' : '#fff')
-    .attr('stroke-width', d => d.id === centerNodeId ? 4 : d.type === 'Category' ? 3 : 2)
+    .attr('stroke', d => highlightNodes.has(d.id) ? '#ff6b35' : d.id === centerNodeId ? '#FFD700' : '#fff')
+    .attr('stroke-width', d => highlightNodes.has(d.id) ? 5 : d.id === centerNodeId ? 4 : d.type === 'Category' ? 3 : 2)
+    .attr('opacity', d => props.dimUnhighlighted && hasHighlight && !highlightNodes.has(d.id) ? 0.28 : 1)
 
   node.append('text')
     .attr('dy', '0.35em')
     .attr('text-anchor', 'middle')
     .attr('font-size', d => d.type === 'Category' ? 10 : 9)
     .attr('fill', '#fff')
+    .attr('opacity', d => props.dimUnhighlighted && hasHighlight && !highlightNodes.has(d.id) ? 0.4 : 1)
     .attr('pointer-events', 'none')
     .text(d => (d.name || d.id || '').slice(0, 10))
 
@@ -274,7 +299,7 @@ function onNodeClick(d, data) {
     return
   }
   selectedNode.value = d
-  const allLinks = data.links || []
+  const allLinks = data.links || data.edges || []
   const neighbors = allLinks
     .filter(l => {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source
@@ -308,6 +333,20 @@ function findCenterNodeId(nodes, links) {
   ).id
 }
 
+function linkKey(link) {
+  const source = typeof link.source === 'object' ? link.source.id : link.source
+  const target = typeof link.target === 'object' ? link.target.id : link.target
+  return `${source}->${target}:${link.relation || ''}`
+}
+
+function isHighlightedLink(link, highlightLinks, highlightNodes) {
+  const source = typeof link.source === 'object' ? link.source.id : link.source
+  const target = typeof link.target === 'object' ? link.target.id : link.target
+  return highlightLinks.has(link.id) ||
+    highlightLinks.has(linkKey(link)) ||
+    (highlightNodes.has(source) && highlightNodes.has(target))
+}
+
 function resetZoom() {
   if (svgEl.value?.__d3svg && svgEl.value?.__d3zoom) {
     svgEl.value.__d3svg.call(svgEl.value.__d3zoom.transform, d3.zoomIdentity)
@@ -337,6 +376,20 @@ onUnmounted(() => {
 }
 .reset-btn { margin-left: auto; }
 .project-legend { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 8px; }
+.highlight-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #606266;
+  font-size: 12px;
+}
+.highlight-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff6b35;
+  box-shadow: 0 0 0 3px rgba(255,107,53,0.16);
+}
 .legend-item {
   padding: 2px 8px;
   border-radius: 10px;

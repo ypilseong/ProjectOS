@@ -6,6 +6,7 @@ import AboutView from '../views/AboutView.vue'
 const routes = [
   { path: '/', component: HomeView },
   { path: '/projects/:id', component: ProjectDetail },
+  { path: '/projects/:id/simulation', component: ProjectDetail },
   { path: '/about', component: AboutView },
 ]
 

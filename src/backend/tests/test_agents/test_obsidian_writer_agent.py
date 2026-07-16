@@ -319,3 +319,40 @@ def test_writer_appends_log_file(tmp_path, sample_graph):
     assert "cv.pdf" in first
     assert "graph delta" in second
     assert len(second) > len(first)
+
+
+def test_run_writes_hot_md(tmp_path):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    g = nx.DiGraph()
+    g.add_node("p1", type="Person", name="Alice", description="ML researcher")
+    g.add_node("pr1", type="Project", name="ProjectOS")
+    g.add_node("iso", type="Skill", name="Rust")
+    g.add_edge("p1", "pr1", relation="DEVELOPED")
+
+    agent = ObsidianWriterAgent()
+    agent.run(g, vault_path=str(tmp_path), project_id="proj")
+
+    hot = (tmp_path / "hot.md").read_text(encoding="utf-8")
+    assert "# Hot Context — proj" in hot
+    assert "[[Alice]]" in hot
+    assert "[[Rust]]" in hot  # gap
+
+
+def test_hot_md_includes_current_build_in_recent(tmp_path):
+    from app.agents.obsidian_writer_agent import ObsidianWriterAgent
+
+    g = nx.DiGraph()
+    g.add_node("p1", type="Person", name="Alice")
+    g.add_node("pr1", type="Project", name="ProjectOS")
+    g.add_edge("p1", "pr1", relation="DEVELOPED")
+
+    agent = ObsidianWriterAgent()
+    agent.run(g, vault_path=str(tmp_path), project_id="proj")
+
+    hot = (tmp_path / "hot.md").read_text(encoding="utf-8")
+    log = (tmp_path / "log.md").read_text(encoding="utf-8")
+    # The build event written to log.md must surface in hot.md recent activity
+    assert "graph" in log
+    assert "## 최근 활동" in hot
+    assert "graph" in hot.split("## 최근 활동")[1].split("##")[0]

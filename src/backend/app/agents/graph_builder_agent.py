@@ -10,16 +10,63 @@ from app.models.graph import GraphStats, Ontology, TextChunk
 from app.utils.entity_normalization import clean_entity_name
 from app.utils.entity_resolver import EntityResolver
 from app.utils.entity_validation import is_valid_entity, normalize_entity_type
+from app.utils.evidence_anchor import make_evidence_anchor
 from app.utils.llm_client import LLMClient
 from app.utils.routing import Role
 from app.utils.logger import get_logger
 from app.utils.user_config import get_user_name_values, get_user_name_variants, load_user_config
+from app.services.ontology_context import format_prompt_context
 
 logger = get_logger(__name__)
 
 RELATION_TYPE_ALIASES = {
     "LEAD_BY": "LED_BY",
 }
+
+
+DOCUMENT_TYPE_RULES = {
+    "cv": """Document-type rules for CV/resume:
+- Treat bullet entries under Education, Experience, Projects, Publications, Awards, and Skills as profile evidence about the document owner unless another subject is explicit.
+- Prefer Person -> Project/Role/Organization/Institution/Publication/Achievement relations and Project -> Skill relations.
+- Extract formal roles, institutions, organizations, publications, awards, GPA, scholarships, and measurable results; avoid section headings such as "Experience" or "Skills" as entities.
+- Skills listed without project context may connect to the document owner with USES_SKILL, but if the same chunk names a project, connect the Project to the Skill too.""",
+    "paper": """Document-type rules for paper/publication:
+- Prioritize Publication, Person, Institution, Organization, Project, Skill/method/model, Event/venue, and concrete contributions or results.
+- Extract paper title, authors, venue/conference/journal, affiliations, datasets, methods, models, systems, and measured findings when present.
+- Use Publication as the central node and connect it to authors, institutions, projects, methods/skills, venues/events, and achievements.
+- Do not create entities for generic sections such as Abstract, Introduction, Related Work, Method, or Conclusion.""",
+    "report": """Document-type rules for report:
+- Prioritize Project, Organization, Person, Role, Event, Skill/method/tool, Achievement, and decisions or outcomes with evidence.
+- Extract executive-summary claims only when they identify concrete entities, measurable outcomes, owners, risks, or recommendations.
+- Connect projects to used skills/tools and involved organizations/people; connect recommendations or milestones only when they are concrete events or achievements.
+- Do not create graph entities for headings, action-item labels, generic risks, or vague business phrases.""",
+    "memo": """Document-type rules for memo/note:
+- Notes and memos are often informal; extract only durable entities that should remain useful after the note is gone.
+- Prioritize named projects, people, organizations, skills/tools, events, decisions, and follow-up achievements.
+- Treat todo/checklist items as Event or Achievement only when they describe a concrete scheduled event, decision, deliverable, or completed result.
+- Avoid transient thoughts, unassigned todos, generic reminders, and raw sentence fragments as entities.""",
+    "email": """Document-type rules for email/message:
+- Prioritize sender/recipient people, organizations, projects, events, commitments, deliverables, and dated decisions.
+- Extract relationships only when the email gives evidence for collaboration, ownership, scheduling, delivery, or use of a skill/tool.
+- Do not create entities for greetings, signatures, quoted thread fragments, boilerplate disclaimers, or generic message labels.
+- If an attachment or linked document is mentioned, extract it only as Publication, Project, or Event when it is named and relevant.""",
+}
+
+
+DOCUMENT_TYPE_ALIASES = {
+    "resume": "cv",
+    "curriculum_vitae": "cv",
+    "publication": "paper",
+    "research_paper": "paper",
+    "article": "paper",
+    "memo": "memo",
+    "note": "memo",
+    "notes": "memo",
+    "mail": "email",
+    "message": "email",
+}
+
+PAPER_FILE_TYPES = {"paper", "publication", "research_paper", "article"}
 
 
 class GraphBuilderAgent:
@@ -99,6 +146,18 @@ class GraphBuilderAgent:
             return "USES_SKILL", src_type, src_name, tgt_type, tgt_name
         return normalized, src_type, src_name, tgt_type, tgt_name
 
+    @staticmethod
+    def _document_type_rules(file_type: str) -> str:
+        normalized = (file_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+        normalized = DOCUMENT_TYPE_ALIASES.get(normalized, normalized)
+        return DOCUMENT_TYPE_RULES.get(normalized, "")
+
+    @staticmethod
+    def _is_paper_chunk(chunk: TextChunk) -> bool:
+        normalized = (chunk.file_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+        normalized = DOCUMENT_TYPE_ALIASES.get(normalized, normalized)
+        return normalized in PAPER_FILE_TYPES
+
     async def run(
         self,
         chunks: list[TextChunk],
@@ -106,8 +165,12 @@ class GraphBuilderAgent:
         incremental: bool = False,
         graph_path: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        capture_context: dict[str, dict] | None = None,
+        project_context: dict | None = None,
     ) -> nx.DiGraph:
         graph = nx.DiGraph()
+        self._capture_context = capture_context or {}
+        self._project_context = project_context or {}
         if incremental and graph_path and Path(graph_path).exists():
             data = json.loads(Path(graph_path).read_text())
             # normalize legacy 'links' key back to 'edges' for nx.node_link_graph compatibility
@@ -133,7 +196,10 @@ class GraphBuilderAgent:
                     result = await self._extract_from_chunk(chunk, entity_types, edge_types)
                     await self._merge_into_graph(graph, result, chunk, allowed_edge_set)
                 except Exception as e:
-                    logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+                    logger.error(
+                        f"Chunk {chunk.chunk_id} failed: {type(e).__name__}: {e}",
+                        exc_info=True,
+                    )
                 if progress_callback:
                     progress_callback(i, total)
             return graph
@@ -149,7 +215,10 @@ class GraphBuilderAgent:
                 try:
                     results[index] = await self._extract_from_chunk(chunk, entity_types, edge_types)
                 except Exception as e:
-                    logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+                    logger.error(
+                        f"Chunk {chunk.chunk_id} failed: {type(e).__name__}: {e}",
+                        exc_info=True,
+                    )
                 completed += 1
                 if progress_callback:
                     progress_callback(completed, total)
@@ -165,12 +234,31 @@ class GraphBuilderAgent:
         self, chunk: TextChunk, entity_types: list[str], edge_types: list[str]
     ) -> dict:
         user_ctx = f"\n{self._user_context}\n" if self._user_context else ""
+        doc_rules = self._document_type_rules(chunk.file_type)
+        doc_rules_block = f"\n{doc_rules}\n" if doc_rules else ""
+        project_context_block = format_prompt_context(
+            getattr(self, "_project_context", None)
+        )
+        project_context_text = f"\n{project_context_block}\n" if project_context_block else ""
+        capture = getattr(self, "_capture_context", {}).get(chunk.source_file)
+        capture_block = ""
+        if capture:
+            capture_block = (
+                "\nCapture intent for this source:\n"
+                f"- Reason captured: {capture.get('capture_reason', '')}\n"
+                f"- User is currently working on: {capture.get('current_focus', '')}\n"
+                f"- Desired reflection: {capture.get('reflection_intent', '')}\n"
+                "Prioritize entities and relations relevant to this intent. "
+                "Do not invent entities unrelated to the source text.\n"
+            )
         prompt = f"""Extract entities and relations from the text below.
-{user_ctx}
+{project_context_text}{capture_block}{user_ctx}
 Allowed entity types: {', '.join(entity_types)}
 Allowed relation types: {', '.join(edge_types)}
 
 Extraction rules:
+- Use the project and ontology intent context to prioritize which grounded entities and relations matter most for this graph.
+- The intent may guide emphasis, but every extracted entity and relation must still be supported by the source text.
 - Do not create entities for chunks, pages, sections, or raw text snippets.
 - Extract important skills, tools, methods, model names, projects, organizations, publications, roles, events, institutions, and concrete achievements so the UI graph shows meaningful key items.
 - Use Achievement only for official or record-like profile accomplishments: GPA/grades, honors, scholarships, awards, competition placements, accepted publications, or formally measured academic/professional results. Do not use Achievement for certificates/exam names, insights, motivations, interests, lessons learned, effort, responsibilities, or ordinary project activities; classify certificates/exams as Skill when useful.
@@ -192,6 +280,9 @@ Extraction rules:
 - Entity type values and relation values must come from the allowed lists.
 - Entity names may preserve the source language and can be Korean, English, or mixed Korean/English.
 - Prefer one stable label for the same concept within a chunk. When both an acronym and expanded label are present, use the expanded label as the entity name.
+- For each relation, add a short "quote": the smallest span of source text (verbatim, under ~160 chars) that supports the relation. If no explicit span supports it, use an empty string.
+- For each relation, add "directness": "direct" if the relation is explicitly stated in the text, or "inferred" if you reconstructed it from context. Be conservative — use "inferred" when unsure.
+{doc_rules_block}
 
 Text:
 {chunk.text}
@@ -204,7 +295,8 @@ Return only valid JSON in this exact shape:
   "relations": [
     {{"source": "양필성", "source_type": "Person",
       "target": "Python", "target_type": "Skill",
-      "relation": "USES_SKILL", "confidence": 0.9}}
+      "relation": "USES_SKILL", "confidence": 0.9,
+      "quote": "양필성은 Python 전문가", "directness": "direct"}}
   ]
 }}"""
         return await self._llm.chat_json([{"role": "user", "content": prompt}])
@@ -213,6 +305,7 @@ Return only valid JSON in this exact shape:
         self, graph: nx.DiGraph, result: dict, chunk: TextChunk, allowed_edge_set: set[str] | None = None
     ):
         node_map: dict[str, str] = {}
+        paper_chunk = self._is_paper_chunk(chunk)
 
         for entity in result.get("entities", []):
             etype = normalize_entity_type(entity.get("type", ""))
@@ -221,6 +314,7 @@ Return only valid JSON in this exact shape:
                 logger.info(f"Skipping invalid entity: {etype}:{name}")
                 continue
 
+            node_anchor = make_evidence_anchor(chunk)
             existing = await self._resolver.find_existing_node_async(graph, etype, name)
             if existing:
                 node_id = existing
@@ -230,6 +324,10 @@ Return only valid JSON in this exact shape:
                 chunk_ids = set(graph.nodes[node_id].get("source_chunk_ids", []))
                 chunk_ids.add(chunk.chunk_id)
                 graph.nodes[node_id]["source_chunk_ids"] = list(chunk_ids)
+                graph.nodes[node_id].setdefault("evidence", []).append(node_anchor)
+            elif paper_chunk and etype == "Person":
+                logger.info(f"Skipping paper author without existing Person node: {name}")
+                continue
             else:
                 node_id = f"{etype}:{name}"
                 graph.add_node(
@@ -239,6 +337,7 @@ Return only valid JSON in this exact shape:
                     description=entity.get("description", ""),
                     source_files=[chunk.source_file],
                     source_chunk_ids=[chunk.chunk_id],
+                    evidence=[node_anchor],
                     attributes={},
                 )
             node_map[name] = node_id
@@ -259,12 +358,20 @@ Return only valid JSON in this exact shape:
             src_id = node_map.get(src_name)
             tgt_id = node_map.get(tgt_name)
             if src_id and tgt_id and src_id in graph and tgt_id in graph:
+                confidence = rel.get("confidence", 1.0)
                 graph.add_edge(
                     src_id,
                     tgt_id,
                     relation=relation,
-                    confidence=rel.get("confidence", 1.0),
+                    confidence=confidence,
                     source_chunk_id=chunk.chunk_id,
+                    evidence=make_evidence_anchor(
+                        chunk,
+                        quote=rel.get("quote", ""),
+                        confidence=confidence,
+                        method="llm_extraction",
+                        directness=rel.get("directness", "direct"),
+                    ),
                 )
 
     def _find_existing_node(
@@ -300,7 +407,10 @@ Return only valid JSON in this exact shape:
             result = await self._extract_from_chunk(synthetic, entity_types, edge_types)
             self._merge_edges_only(graph, result, synthetic, set(edge_types))
         except Exception as e:
-            logger.warning(f"reextract_with_context failed ({source_file}): {e}")
+            logger.warning(
+                f"reextract_with_context failed ({source_file}): {type(e).__name__}: {e}",
+                exc_info=True,
+            )
         return graph.number_of_edges() - edges_before
 
     def _merge_edges_only(
@@ -334,12 +444,20 @@ Return only valid JSON in this exact shape:
             src_id = node_map.get(src_name)
             tgt_id = node_map.get(tgt_name)
             if src_id and tgt_id and not graph.has_edge(src_id, tgt_id):
+                confidence = rel.get("confidence", 1.0)
                 graph.add_edge(
                     src_id,
                     tgt_id,
                     relation=relation,
-                    confidence=rel.get("confidence", 1.0),
+                    confidence=confidence,
                     source_chunk_id=chunk.chunk_id,
+                    evidence=make_evidence_anchor(
+                        chunk,
+                        quote=rel.get("quote", ""),
+                        confidence=confidence,
+                        method="reextract_context",
+                        directness="inferred",
+                    ),
                 )
 
     def save(self, graph: nx.DiGraph, path: str):

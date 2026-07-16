@@ -24,6 +24,10 @@
   }
 </script>
 
-<Card title="Sync" subtitle="Pull generated notes into this vault.">
-  <Button onclick={sync}>Pull from backend</Button>
+<Card title="Sync" subtitle="Pull generated ProjectOS notes into this vault.">
+  <div class="pos-sync-target">
+    <span>Target folder</span>
+    <code>{store.targetFolder()}</code>
+  </div>
+  <Button variant="primary" onclick={sync}>Sync selected project</Button>
 </Card>

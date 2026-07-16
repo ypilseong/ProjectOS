@@ -1,12 +1,9 @@
 import {
   App,
-  DropdownComponent,
   ItemView,
-  Notice,
   Plugin,
   PluginSettingTab,
   Setting,
-  TextComponent,
   WorkspaceLeaf,
 } from "obsidian";
 import { mount, unmount } from "svelte";
@@ -14,14 +11,6 @@ import { mount, unmount } from "svelte";
 import App_ from "./App.svelte";
 import { ApiClient } from "./api/client";
 import { AppStore } from "./store/appStore.svelte";
-import {
-  BackendSettings,
-  DEFAULT_BACKEND_SETTINGS,
-  RUNTIME_PRESETS,
-  mergeBackendSettings,
-  parsePositiveInt,
-} from "./lib/runtime";
-import { deleteProjectFolderFromVault } from "./lib/graphColors";
 
 const VIEW_TYPE_PROJECTOS = "projectos-vault-sync-view";
 
@@ -33,7 +22,7 @@ interface ProjectOSSettings {
 }
 
 const DEFAULT_SETTINGS: ProjectOSSettings = {
-  baseUrl: "http://localhost:8002",
+  baseUrl: "http://localhost:14006",
   projectId: "",
   projectName: "",
   targetFolder: "",
@@ -73,17 +62,6 @@ export default class ProjectOSPlugin extends Plugin {
     if (leaf) workspace.revealLeaf(leaf);
   }
 
-  async getBackendSettings(): Promise<BackendSettings> {
-    return this.client.getBackendSettings();
-  }
-
-  async setBackendSettings(settings: BackendSettings): Promise<BackendSettings> {
-    return this.client.setBackendSettings(settings);
-  }
-
-  async deleteProjectFolder(targetFolder: string): Promise<boolean> {
-    return deleteProjectFolderFromVault(this.app, targetFolder);
-  }
 }
 
 class ProjectOSView extends ItemView {
@@ -113,7 +91,6 @@ class ProjectOSView extends ItemView {
     try {
       const store = new AppStore(this.plugin.client, this.plugin);
       this.component = mount(App_, { target: root, props: { store, app: this.app } });
-      await store.loadBackendSettings();
       await store.refreshProjects();
     } catch (error) {
       console.error("ProjectOS view failed to open", error);
@@ -169,7 +146,7 @@ class ProjectOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Backend base URL").addText((text) =>
       text
-        .setPlaceholder("http://localhost:8002")
+        .setPlaceholder("http://localhost:14006")
         .setValue(this.plugin.settings.baseUrl)
         .onChange(async (value) => {
           this.plugin.settings.baseUrl = value.trim() || DEFAULT_SETTINGS.baseUrl;
@@ -179,7 +156,7 @@ class ProjectOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Project ID")
-      .setDesc("Auto-filled when a project is created or selected in the ProjectOS panel.")
+      .setDesc("Auto-filled when a project is selected in the ProjectOS panel.")
       .addText((text) =>
         text
           .setPlaceholder("Created from the ProjectOS panel")
@@ -199,109 +176,5 @@ class ProjectOSSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
     );
-
-    this.renderRuntimeSettings(containerEl);
-  }
-
-  renderRuntimeSettings(containerEl: HTMLElement): void {
-    const section = containerEl.createDiv({ cls: "projectos-settings-runtime" });
-    section.createEl("h3", { text: "Backend runtime" });
-    section.createEl("p", {
-      cls: "projectos-muted",
-      text: "These values are stored in the ProjectOS backend and affect the next graph build.",
-    });
-
-    let llmBackend: DropdownComponent;
-    let graphMode: DropdownComponent;
-    let graphBackend: DropdownComponent;
-    let claudeModel: TextComponent;
-    let chunkSize: TextComponent;
-    let chunkOverlap: TextComponent;
-
-    const setControls = (settings: Partial<BackendSettings>): void => {
-      const merged = mergeBackendSettings(settings);
-      llmBackend.setValue(merged.llm_backend);
-      graphMode.setValue(merged.graph_build_mode);
-      graphBackend.setValue(merged.graph_extraction_backend);
-      claudeModel.setValue(merged.claude_code_model);
-      chunkSize.setValue(String(merged.chunk_size));
-      chunkOverlap.setValue(String(merged.chunk_overlap));
-    };
-
-    const readControls = (): BackendSettings => ({
-      llm_backend: llmBackend.getValue(),
-      graph_build_mode: graphMode.getValue(),
-      graph_extraction_backend: graphBackend.getValue(),
-      claude_code_model: claudeModel.getValue().trim(),
-      chunk_size: parsePositiveInt(chunkSize.getValue(), DEFAULT_BACKEND_SETTINGS.chunk_size),
-      chunk_overlap: parsePositiveInt(chunkOverlap.getValue(), DEFAULT_BACKEND_SETTINGS.chunk_overlap),
-    });
-
-    new Setting(section)
-      .setName("Preset")
-      .setDesc("Quickly switch the graph build behavior.")
-      .addDropdown((dropdown) => {
-        for (const preset of RUNTIME_PRESETS) dropdown.addOption(preset.id, preset.title);
-        dropdown.onChange((value) => {
-          const preset = RUNTIME_PRESETS.find((item) => item.id === value);
-          if (preset) setControls(preset.settings);
-        });
-      });
-
-    new Setting(section).setName("LLM backend").addDropdown((dropdown) => {
-      llmBackend = dropdown.addOption("local", "Local LLM").addOption("claude_code", "Claude Code");
-    });
-
-    new Setting(section).setName("Graph build mode").addDropdown((dropdown) => {
-      graphMode = dropdown.addOption("chunk", "Chunk extraction").addOption("claude_task", "Claude task mode");
-    });
-
-    new Setting(section).setName("Chunk extraction backend").addDropdown((dropdown) => {
-      graphBackend = dropdown.addOption("local", "Local LLM").addOption("claude_code", "Claude Code");
-    });
-
-    new Setting(section).setName("Claude Code model").addText((text) => {
-      claudeModel = text.setPlaceholder("claude-haiku-4-5");
-    });
-
-    new Setting(section).setName("Chunk size").addText((text) => {
-      chunkSize = text.setPlaceholder("1800");
-    });
-
-    new Setting(section).setName("Chunk overlap").addText((text) => {
-      chunkOverlap = text.setPlaceholder("150");
-    });
-
-    new Setting(section)
-      .addButton((button) =>
-        button.setButtonText("Reload").onClick(async () => {
-          try {
-            setControls(await this.plugin.getBackendSettings());
-            new Notice("ProjectOS runtime settings loaded.");
-          } catch (error) {
-            setControls(DEFAULT_BACKEND_SETTINGS);
-            new Notice(`ProjectOS runtime settings unavailable: ${String(error)}`);
-          }
-        }),
-      )
-      .addButton((button) =>
-        button
-          .setButtonText("Save runtime")
-          .setCta()
-          .onClick(async () => {
-            try {
-              setControls(await this.plugin.setBackendSettings(readControls()));
-              new Notice("ProjectOS runtime settings saved.");
-            } catch (error) {
-              new Notice(`ProjectOS runtime settings failed: ${String(error)}`);
-            }
-          }),
-      );
-
-    setControls(DEFAULT_BACKEND_SETTINGS);
-    void this.plugin
-      .getBackendSettings()
-      .then(setControls)
-      .catch(() => setControls(DEFAULT_BACKEND_SETTINGS));
   }
 }

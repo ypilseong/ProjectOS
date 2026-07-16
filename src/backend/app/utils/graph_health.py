@@ -4,12 +4,15 @@ from pathlib import Path
 import networkx as nx
 
 from app.agents.obsidian_writer_agent import TYPE_TO_FOLDER, _safe_filename
+from app.utils.graph_restructure import is_meta_node
 
 
 def check_isolated_nodes(graph: nx.DiGraph) -> list[dict]:
     """Return nodes with no edges (degree == 0)."""
     result = []
     for node_id in graph.nodes:
+        if is_meta_node(graph.nodes[node_id]):
+            continue
         if graph.degree(node_id) == 0:
             data = graph.nodes[node_id]
             result.append({
@@ -28,6 +31,8 @@ def check_weak_components(graph: nx.DiGraph) -> list[dict]:
     for comp in components:
         types: dict[str, int] = {}
         for nid in comp:
+            if is_meta_node(graph.nodes[nid]):
+                continue
             t = graph.nodes[nid].get("type", "unknown")
             types[t] = types.get(t, 0) + 1
         result.append({
@@ -45,6 +50,8 @@ def check_duplicate_candidates(
     """Return pairs of same-type nodes whose names are similar but not identical."""
     by_type: dict[str, list[tuple[str, str]]] = {}
     for node_id, data in graph.nodes(data=True):
+        if is_meta_node(data):
+            continue
         ntype = data.get("type", "")
         name = data.get("name", "")
         if ntype and name:
@@ -76,6 +83,8 @@ def check_hub_nodes(graph: nx.DiGraph, max_degree: int = 20) -> list[dict]:
     """Return nodes with total degree above max_degree."""
     result = []
     for node_id in graph.nodes:
+        if is_meta_node(graph.nodes[node_id]):
+            continue
         deg = graph.degree(node_id)
         if deg > max_degree:
             data = graph.nodes[node_id]
@@ -104,7 +113,7 @@ def check_wiki_graph_consistency(graph: nx.DiGraph, vault_path: str | None) -> d
     node_pages: dict[str, str] = {}
     page_names: dict[str, list[str]] = {}
     for node_id, data in graph.nodes(data=True):
-        if data.get("type") == "Category":
+        if is_meta_node(data):
             continue
         ntype = data.get("type", "")
         name = data.get("name", "")
@@ -152,7 +161,7 @@ def check_wiki_graph_consistency(graph: nx.DiGraph, vault_path: str | None) -> d
             "type": data.get("type"),
         }
         for node_id, data in graph.nodes(data=True)
-        if data.get("type") != "Category" and not data.get("source_files")
+        if not is_meta_node(data) and not data.get("source_files")
     ]
 
     return {
